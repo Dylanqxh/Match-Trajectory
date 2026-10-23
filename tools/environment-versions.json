@@ -1,13 +1,12 @@
 {
-  "nativeChecksPassed": 6,
-  "dockerClient": "29.9.2",
-  "storage": "workspace-local non-C drive",
-  "compose": "v5.6.1",
-  "recorded": "2026-10-23",
-  "uv": "0.13.5",
   "dockerEngineVerified": false,
   "python": "3.12.15",
+  "libreoffice": "26.2.4.2",
   "tesseract": "5.5.3",
+  "nativeChecksPassed": 6,
+  "recorded": "2026-10-23",
+  "dockerClient": "29.9.2",
+  "compose": "v5.6.1",
   "pythonPackages": {
     "fastapi": "0.161.1",
     "pydantic": "2.14.1",
@@ -23,5 +22,6 @@
     "ruff": "0.17.2"
   },
   "node": "v22.23.4",
-  "libreoffice": "26.2.4.2"
+  "uv": "0.13.5",
+  "storage": "workspace-local non-C drive"
 }

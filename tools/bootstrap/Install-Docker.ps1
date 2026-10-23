@@ -10,3 +10,4 @@ $system=Get-CimInstance Win32_OperatingSystem | Select-Object Caption,BuildNumbe
 Save-Paths @{dockerInstaller=$installer;dockerInstallRoot=(Join-Path $environmentRoot 'runtimes\docker-desktop');dockerDataRoot=(Join-Path $environmentRoot 'docker-data')}
 Write-Output "DOCKER_INSTALLER_VERIFIED=$installer"
 Write-Output "WSL_EXIT_CODE=$wslCode"
+exit 0

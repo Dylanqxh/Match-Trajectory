@@ -1,0 +1,27 @@
+{
+  "nativeChecksPassed": 6,
+  "dockerClient": "29.9.2",
+  "storage": "workspace-local non-C drive",
+  "compose": "v5.6.1",
+  "recorded": "2026-10-23",
+  "uv": "0.13.5",
+  "dockerEngineVerified": false,
+  "python": "3.12.15",
+  "tesseract": "5.5.3",
+  "pythonPackages": {
+    "fastapi": "0.161.1",
+    "pydantic": "2.14.1",
+    "sqlalchemy": "2.1.6",
+    "alembic": "1.20.1",
+    "httpx": "0.28.1",
+    "cryptography": "50.0.2",
+    "pypdfium2": "5.14.0",
+    "pillow": "13.0.0",
+    "python-docx": "1.2.0",
+    "playwright": "1.64.1",
+    "pytest": "9.1.1",
+    "ruff": "0.17.2"
+  },
+  "node": "v22.23.4",
+  "libreoffice": "26.2.4.2"
+}

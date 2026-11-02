@@ -3,6 +3,8 @@ import time
 import uuid
 from contextlib import suppress
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.generation_models import Draft, Evidence, Plan, Review
 from app.generation_service import GenerationService
 from app.model_client import ModelOutputError
@@ -22,6 +24,8 @@ class Workflow(GenerationService):
         self._signal = asyncio.Event()
         self._worker = None
         self._active = None
+        self.execution_lock = asyncio.Lock()
+        self.service_warning = ""
 
     async def start(self):
         self.jobs.recover_unfinished()
@@ -45,10 +49,20 @@ class Workflow(GenerationService):
         return job
 
     async def _loop(self):
+        needs_recovery = False
         while True:
-            self._signal.clear()
-            if not await self.run_one():
-                await self._signal.wait()
+            try:
+                if needs_recovery:
+                    self.jobs.recover_unfinished()
+                    needs_recovery = False
+                    self.service_warning = ""
+                self._signal.clear()
+                if not await self.run_one():
+                    await self._signal.wait()
+            except (SQLAlchemyError, OSError):
+                self.service_warning = "本机存储暂时不可用，执行已暂停。请检查磁盘空间；恢复后任务会标为中断，由你明确继续。"
+                needs_recovery = True
+                await asyncio.sleep(1)
 
     def _change(self, job_id, token, apply):
         def guarded(job, connection):
@@ -96,9 +110,8 @@ class Workflow(GenerationService):
                 task = asyncio.create_task(self.client.complete(config, stage, self._context(job, stage), schema))
                 self._active = (job["id"], task)
                 value = await task
-            if isinstance(value.value, Plan):
-                if any(ref not in {e["id"] for e in job["evidence"]} for ref in value.value.selected_fact_ids):
-                    raise ModelOutputError("选材引用不存在，不能继续起草")
+            if isinstance(value.value, Plan) and any(ref not in {e["id"] for e in job["evidence"]} for ref in value.value.selected_fact_ids):
+                raise ModelOutputError("选材引用不存在，不能继续起草")
             if isinstance(value.value, Review):
                 allowed = {"document", *[c.id for c in Draft.model_validate(job["draft"]).claims()],
                            *[s["id"] for s in job["draft"]["sections"]]}
@@ -149,6 +162,12 @@ class Workflow(GenerationService):
         return self._change(job["id"], token, apply)
 
     async def run_one(self):
+        if self.execution_lock.locked():
+            return False
+        async with self.execution_lock:
+            return await self._run_one()
+
+    async def _run_one(self):
         job = self.jobs.claim_next()
         if not job:
             return False
@@ -162,7 +181,8 @@ class Workflow(GenerationService):
                 if stage == "review":
                     checks = validate_draft(Draft.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
                     if checks:
-                        job = self._change(job["id"], token, lambda j, _: j.update(issues=[i.model_dump() for i in checks], review=None))
+                        check_payload = [i.model_dump() for i in checks]
+                        job = self._change(job["id"], token, lambda j, _, issues=check_payload: j.update(issues=issues, review=None))
                         if not self._can_revise(job):
                             self._finish(job, token)
                             return True
@@ -177,9 +197,9 @@ class Workflow(GenerationService):
                         continue
                     raise
                 if stage == "plan":
-                    def plan_done(current, _):
-                        current["plan"] = output.model_dump()
-                        if output.decision == "ask" and current["input"]["allow_questions"]:
+                    def plan_done(current, _, plan=output):
+                        current["plan"] = plan.model_dump()
+                        if plan.decision == "ask" and current["input"]["allow_questions"]:
                             current.update(state="waiting_input", question_group=uuid.uuid4().hex, run_token="")
                         else:
                             current["stage"] = "draft"
@@ -188,15 +208,15 @@ class Workflow(GenerationService):
                     if job["state"] == "waiting_input":
                         return True
                 elif stage in ("draft", "revise"):
-                    def draft_done(current, _):
-                        current.update(draft=output.model_dump(), stage="review", review=None, issues=[])
-                        if stage == "revise":
+                    def draft_done(current, _, draft=output, completed_stage=stage):
+                        current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
+                        if completed_stage == "revise":
                             current["revisions"] += 1
 
                     self._change(job["id"], token, draft_done)
                 else:
-                    job = self._change(job["id"], token, lambda j, _: j.update(review=output.model_dump(),
-                                                                                            issues=[i.model_dump() for i in output.issues]))
+                    job = self._change(job["id"], token, lambda j, _, review=output: j.update(review=review.model_dump(),
+                                                                                           issues=[i.model_dump() for i in review.issues]))
                     if output.verdict == "pass" or not self._can_revise(job):
                         self._finish(job, token)
                         return True
@@ -205,7 +225,7 @@ class Workflow(GenerationService):
             pass
         except (ProviderError, Conflict) as exc:
             with suppress(StaleRun):
-                self._change(job["id"], token, lambda j, _: j.update(state="failed", error=str(exc), run_token="", request_started=None))
+                self._change(job["id"], token, lambda j, _, message=str(exc): j.update(state="failed", error=message, run_token="", request_started=None))
         except Exception:  # noqa: BLE001 -- do not log model text, user material or credentials.
             with suppress(StaleRun):
                 self._change(job["id"], token, lambda j, _: j.update(state="failed", error="任务处理失败，材料与已完成步骤已保留，请查看后继续。", run_token="", request_started=None))

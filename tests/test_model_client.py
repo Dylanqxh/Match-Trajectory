@@ -86,3 +86,24 @@ def test_large_output_stream_is_closed_before_all_bytes_are_read():
         asyncio.run(ModelClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=stream))).complete(
             config(), "review", {}, Review))
     assert stream.reads <= 5 and stream.closed
+
+
+def test_total_model_deadline_closes_stream(monkeypatch):
+    from app import model_client
+
+    class SlowStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            await asyncio.sleep(0.2)
+            yield b" "
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = SlowStream()
+    monkeypatch.setattr(model_client, "REQUEST_TIMEOUT", 0.02)
+    client = model_client.ModelClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=stream)))
+    with pytest.raises(ProviderError, match="超时"):
+        asyncio.run(client.complete(config(), "review", {}, Review))
+    assert stream.closed

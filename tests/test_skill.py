@@ -59,3 +59,11 @@ def test_review_cannot_claim_pass_with_blocking_issues():
         Review.model_validate({"verdict": "pass", "issues": [
             {"item_id": "item1", "severity": "blocking", "code": "unsupported", "message": "没有依据"},
         ]})
+
+
+def test_job_requirement_cannot_supply_an_unstated_technology():
+    from app.skill import build_evidence, validate_draft
+
+    evidence = build_evidence("使用 Java 完成查询接口。")
+    issues = validate_draft(make_draft("使用 Java 和 Redis 实现查询缓存。"), evidence)
+    assert any(issue.code == "unsupported" for issue in issues)

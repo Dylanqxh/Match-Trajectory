@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 import sys
 from contextlib import asynccontextmanager
@@ -7,9 +8,13 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.demo import demo_content
+from app.generation_models import AnswerInput, GenerationInput
+from app.jobs import JobStore
+from app.model_client import ModelClient, ModelRegistry
 from app.models import (
     CreateResume,
     ExportRequest,
@@ -20,25 +25,42 @@ from app.models import (
     Section,
 )
 from app.store import Conflict, NotFound, ResumeStore
+from app.workflow import Workflow
+
+
+class ReviewRequest(RevisionRequest):
+    request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,80}$")
+
+
+class TakeoverRequest(RevisionRequest):
+    acknowledged: bool
 
 
 def resource_root() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 
-def create_app(data_dir: Path, *, web_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None) -> FastAPI:
     store = ResumeStore(data_dir / "resumes.sqlite3")
+    jobs = JobStore(store)
+    registry = ModelRegistry()
+    workflow = Workflow(store, jobs, registry, model_client or ModelClient())
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
-        store.engine.dispose()
+        await workflow.start()
+        try:
+            yield
+        finally:
+            await workflow.close()
+            store.engine.dispose()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
     app.state.data_dir = data_dir
     app.state.provider = None
     app.state.provider_key = None
+    app.state.workflow = workflow
     session = secrets.token_urlsafe(32)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 
@@ -74,13 +96,18 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None) -> FastAPI:
         return JSONResponse({"detail": "输入不符合要求，请检查长度、空段落和字段类型",
                              "fields": [".".join(map(str, error["loc"])) for error in exc.errors()]}, status_code=422)
 
+    @app.exception_handler(ValueError)
+    async def generation_validation_handler(request, exc):
+        message = "当前内容不符合处理要求，请检查材料长度与正文结构" if isinstance(exc, ValidationError) else str(exc)
+        return JSONResponse({"detail": message}, status_code=422)
+
     @app.get("/health")
     def health():
-        return {"status": "ok", "milestone": "m0", "ai_generation": False}
+        return {"status": "ok", "milestone": "m1", "ai_generation": True, "worker_warning": workflow.service_warning}
 
     @app.get("/api/session")
     def initialize_session():
-        response = JSONResponse({"status": "ready", "milestone": "m0"})
+        response = JSONResponse({"status": "ready", "milestone": "m1"})
         response.set_cookie("mt_session", session, httponly=True, samesite="strict", path="/")
         return response
 
@@ -130,8 +157,14 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None) -> FastAPI:
         return JSONResponse({"detail": str(exc)}, status_code=422)
 
     @app.post("/api/resumes/{resume_id}/exports")
-    def export_file(resume_id: str, body: ExportRequest):
-        path = export_resume(store, data_dir, resume_id, body)
+    async def export_file(resume_id: str, body: ExportRequest):
+        if workflow.execution_lock.locked():
+            raise Conflict("当前有生成或导出任务正在执行，请完成或取消后再导出")
+        try:
+            async with workflow.execution_lock:
+                path = await asyncio.to_thread(export_resume, store, data_dir, resume_id, body)
+        finally:
+            workflow.wake()
         media = "application/pdf" if body.format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         return FileResponse(path, media_type=media, filename=path.name)
 
@@ -163,8 +196,47 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None) -> FastAPI:
     @app.post("/api/model-settings/test")
     async def test_model_settings(body: providers.ProviderConfig):
         result = await providers.probe_provider(body)
+        result["config_revision"] = registry.register(body)
         app.state.provider, app.state.provider_key = result, body.api_key
         return result
+
+    @app.get("/api/generation-jobs")
+    def list_generation_jobs():
+        return jobs.list()
+
+    @app.post("/api/generation-jobs", status_code=201)
+    async def create_generation_job(body: GenerationInput):
+        return workflow.submit(body)
+
+    @app.get("/api/generation-jobs/{job_id}")
+    def get_generation_job(job_id: str):
+        return {**jobs.get(job_id), "service_warning": workflow.service_warning}
+
+    @app.post("/api/generation-jobs/{job_id}/answer")
+    async def answer_generation_job(job_id: str, body: AnswerInput):
+        return workflow.answer(job_id, body.model_dump())
+
+    @app.post("/api/generation-jobs/{job_id}/cancel")
+    async def cancel_generation_job(job_id: str):
+        return workflow.cancel(job_id)
+
+    @app.post("/api/generation-jobs/{job_id}/resume")
+    async def resume_generation_job(job_id: str):
+        return workflow.resume(job_id)
+
+    @app.post("/api/generation-jobs/{job_id}/adopt")
+    async def adopt_generation_job(job_id: str):
+        return workflow.adopt(job_id)
+
+    @app.post("/api/resumes/{resume_id}/review", status_code=201)
+    async def recheck_resume(resume_id: str, body: ReviewRequest):
+        return workflow.recheck(resume_id, body.expected_revision, body.request_id)
+
+    @app.post("/api/resumes/{resume_id}/takeover")
+    async def takeover_resume(resume_id: str, body: TakeoverRequest):
+        if not body.acknowledged:
+            raise ValueError("请明确确认已自行核对当前版本")
+        return workflow.takeover(resume_id, body.expected_revision)
 
     web = web_dir or resource_root() / "web" / "dist"
     if web.is_dir():

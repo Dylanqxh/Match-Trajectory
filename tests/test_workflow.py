@@ -276,3 +276,78 @@ def test_edit_during_recheck_cannot_attach_stale_pass(tmp_path):
     asyncio.run(runner.run_one())
     assert jobs.get(recheck["id"])["state"] == "failed"
     assert store.get(record.id).ai.review_status == "unreviewed"
+
+
+def test_shutdown_interrupts_inflight_call_and_keeps_consumed_budget(tmp_path):
+    runner, jobs, _, _, _ = setup(tmp_path, [])
+    entered = asyncio.Event()
+
+    class SlowModel:
+        async def complete(self, config, stage, context, schema):
+            entered.set()
+            await asyncio.sleep(30)
+
+    runner.client = SlowModel()
+
+    async def run():
+        await runner.start()
+        job = runner.submit(request())
+        await entered.wait()
+        await runner.close()
+        current = jobs.get(job["id"])
+        assert current["state"] == "interrupted"
+        assert current["calls"] == 1 and current["request_started"] is None
+
+    asyncio.run(run())
+
+
+def test_answer_keeps_original_restrictions_and_adds_new_evidence(tmp_path):
+    ask = {"decision": "ask", "selected_fact_ids": ["e1"], "questions": [{"id": "q1", "text": "测试交付是什么？"}]}
+    runner, jobs, _, _, model = setup(tmp_path, [ask, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    waiting = jobs.get(job["id"])
+    runner.answer(job["id"], {"question_group": waiting["question_group"], "answers": {"q1": "整理测试记录"}})
+    asyncio.run(runner.run_one())
+    sources = model.calls[1][1]["evidence"]
+    assert any(e["id"] == "e1" and "未上线" in e["text"] for e in sources)
+    assert any(e["id"].startswith("a") and e["text"] == "整理测试记录" for e in sources)
+
+
+def test_storage_failure_does_not_silently_kill_worker_or_replay_paid_work(tmp_path, monkeypatch):
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
+    original = jobs.claim_next
+    broken = True
+    seen = asyncio.Event()
+
+    def failing_claim():
+        if broken:
+            seen.set()
+            raise OSError("simulated disk unavailable")
+        return original()
+
+    monkeypatch.setattr(jobs, "claim_next", failing_claim)
+
+    async def run():
+        nonlocal broken
+        await runner.start()
+        job = runner.submit(request())
+        await asyncio.wait_for(seen.wait(), 1)
+        await asyncio.sleep(0)
+        assert runner.service_warning
+        broken = False
+        for _ in range(100):
+            if jobs.get(job["id"])["state"] == "interrupted":
+                break
+            await asyncio.sleep(0.02)
+        assert jobs.get(job["id"])["state"] == "interrupted"
+        assert model.calls == []
+        runner.resume(job["id"])
+        for _ in range(100):
+            if jobs.get(job["id"])["state"] == "ready":
+                break
+            await asyncio.sleep(0.02)
+        assert jobs.get(job["id"])["state"] == "ready"
+        await runner.close()
+
+    asyncio.run(run())

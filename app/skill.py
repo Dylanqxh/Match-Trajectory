@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.generation_models import Draft, Evidence, Issue
+from app.generation_models import Claim, Draft, Evidence, Issue
 
 ROLE_WORDS = {
     "algorithm": ("算法", "nlp", "机器学习", "深度学习", "计算机视觉", "推荐", "大模型"),
@@ -13,6 +13,8 @@ ROLE_WORDS = {
     "operations": ("运营", "增长", "社区", "内容"),
     "backend": ("后端", "后台", "java", "golang", "服务端", "研发", "开发"),
 }
+TECHNOLOGIES = ("Java", "Python", "Redis", "MySQL", "PostgreSQL", "Kafka", "Spring", "PyTorch", "TensorFlow",
+                "Kubernetes", "Docker", "SQL", "Spark", "Hadoop", "Excel", "Tableau", "Figma", "Axure", "C++", "C#")
 
 
 @dataclass(frozen=True)
@@ -54,9 +56,10 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
     sources = {e.id: e.text for e in evidence}
     issues = []
     numeric = re.compile(r"\d+(?:[.,]\d+)*(?:\s*(?:%|％|万|亿|年|个月|月|天|小时|人|次|条|倍|ms|秒|个|GB|MB|QPS))?", re.IGNORECASE)
-    for claim in draft.claims():
-        def add(code, message):
-            issues.append(Issue(item_id=claim.id, severity="blocking", code=code, message=message))
+    claims = draft.claims() + [Claim(id=s.id, text=s.title, fact_ids=list(sources)) for s in draft.sections] if sources else draft.claims()
+    for claim in claims:
+        def add(code, message, item_id=claim.id):
+            issues.append(Issue(item_id=item_id, severity="blocking", code=code, message=message))
 
         if any(ref not in sources for ref in claim.fact_ids):
             add("reference", "段落引用了不存在的材料，不能视为有事实依据。")
@@ -65,6 +68,10 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
         source_numbers = {re.sub(r"\s", "", n) for n in numeric.findall(source)}
         if any(re.sub(r"\s", "", n) not in source_numbers for n in numeric.findall(claim.text)):
             add("unsupported", "段落出现了引用原文中没有的数字或数量口径，请删除或补充依据。")
+        for technology in TECHNOLOGIES:
+            pattern = r"(?<![A-Za-z])" + re.escape(technology) + r"(?![A-Za-z])"
+            if re.search(pattern, claim.text, re.IGNORECASE) and not re.search(pattern, source, re.IGNORECASE):
+                add("unsupported", f"{technology} 未在引用材料中出现，不能从岗位要求推断为个人技能。")
         if any(word in claim.text and word not in source for word in ("主导", "精通", "负责人", "独立负责", "从零搭建")):
             add("attribution", "责任或熟练程度比引用材料更强，需要核对个人范围。")
         boundaries = [(r"未上线|没有上线|仅离线", r"已上线|上线运行|生产部署"),

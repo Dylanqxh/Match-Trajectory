@@ -3,7 +3,7 @@ $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $environmentRoot=Join-Path (Split-Path $projectRoot -Parent) '.dev-environment'
 $pathsFile=Join-Path $environmentRoot 'manifests\paths.json'
 if(!(Test-Path -LiteralPath $pathsFile)) { throw "Environment is not provisioned: $pathsFile" }
-$paths=Get-Content -LiteralPath $pathsFile -Raw | ConvertFrom-Json -AsHashtable
+$paths=Get-Content -LiteralPath $pathsFile -Raw | ConvertFrom-Json
 $env:MATCH_TRAJECTORY_ENV_ROOT=$environmentRoot
 $env:TEMP=Join-Path $environmentRoot 'tmp'
 $env:TMP=$env:TEMP

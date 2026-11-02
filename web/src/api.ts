@@ -5,7 +5,7 @@ export interface AIInfo { job_id: string; review_job_id: string; review_status: 
 export interface Resume { id: string; revision: number; confirmed_revision: number | null; origin: "manual" | "demo" | "ai"; content: Content; updated_at: string; ai: AIInfo | null }
 export interface Summary { id: string; revision: number; origin: string; name: string; target_role: string }
 export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", sections: [] };
-export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string }
+export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string; resolution?: { action: string; revision: number } }
 export interface GenerationSummary { id: string; state: string; stage: string; target_role: string; mode: string; adopted_resume_id: string | null }
 export interface GenerationJob extends GenerationSummary {
   service_warning?: string;

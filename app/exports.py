@@ -26,7 +26,7 @@ def check_export(record: ResumeRecord, request: ExportRequest):
         if record.origin == "ai":
             info = record.ai
             if (not info or info.content_hash != resume_hash(record.content)
-                    or any(i.get("severity") == "blocking" for i in info.issues)
+                    or info.has_blockers()
                     or (info.review_status != "passed" and not info.manual_takeover)):
                 raise Conflict("AI 内容需要当前版本审阅通过，或在无已知阻断时明确自行核对接管；现在可以导出草稿")
         if record.confirmed_revision != record.revision:

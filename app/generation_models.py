@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import Field, model_validator
 
@@ -46,6 +46,7 @@ class DraftSection(StrictModel):
 
 
 class Draft(StrictModel):
+    body_limit: ClassVar[int] = 14000
     summary: Claim | None = None
     sections: list[DraftSection] = Field(min_length=1, max_length=8)
 
@@ -57,7 +58,7 @@ class Draft(StrictModel):
             raise ValueError("段落标识重复")
         if self.summary and self.summary.id != "__summary":
             raise ValueError("简介标识必须为 __summary")
-        if sum(len(c.text) for c in claims) > 14000:
+        if sum(len(c.text) for c in claims) > self.body_limit:
             raise ValueError("候选正文过长")
         return self
 
@@ -68,6 +69,22 @@ class Draft(StrictModel):
         return ResumeContent(name=name, contact=contact, target_role=target_role,
                              summary=self.summary.text if self.summary else "",
                              sections=[Section(id=s.id, title=s.title, items=[Item(id=c.id, text=c.text) for c in s.items]) for s in self.sections])
+
+
+class ReviewClaim(Claim):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class ReviewSection(DraftSection):
+    items: list[ReviewClaim] = Field(default_factory=list, max_length=30)
+
+
+class ReviewDraft(Draft):
+    """Lossless review projection of every field accepted by the editor."""
+
+    body_limit: ClassVar[int] = 20000
+    summary: ReviewClaim | None = None
+    sections: list[ReviewSection] = Field(default_factory=list, max_length=12)
 
 
 class Issue(StrictModel):

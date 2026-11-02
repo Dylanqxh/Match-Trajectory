@@ -5,7 +5,7 @@ from contextlib import suppress
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.generation_models import Draft, Evidence, Plan, Review
+from app.generation_models import Draft, Evidence, Plan, Review, ReviewDraft
 from app.generation_service import GenerationService
 from app.model_client import ModelOutputError
 from app.models import resume_hash
@@ -113,7 +113,8 @@ class Workflow(GenerationService):
             if isinstance(value.value, Plan) and any(ref not in {e["id"] for e in job["evidence"]} for ref in value.value.selected_fact_ids):
                 raise ModelOutputError("选材引用不存在，不能继续起草")
             if isinstance(value.value, Review):
-                allowed = {"document", *[c.id for c in Draft.model_validate(job["draft"]).claims()],
+                candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+                allowed = {"document", *[c.id for c in candidate_type.model_validate(job["draft"]).claims()],
                            *[s["id"] for s in job["draft"]["sections"]]}
                 if any(i.item_id not in allowed for i in value.value.issues):
                     raise ModelOutputError("审阅问题没有定位到本次正文")
@@ -179,7 +180,8 @@ class Workflow(GenerationService):
                     return True
                 stage = job["stage"]
                 if stage == "review":
-                    checks = validate_draft(Draft.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
+                    candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+                    checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
                     if checks:
                         check_payload = [i.model_dump() for i in checks]
                         job = self._change(job["id"], token, lambda j, _, issues=check_payload: j.update(issues=issues, review=None))

@@ -351,3 +351,92 @@ def test_storage_failure_does_not_silently_kill_worker_or_replay_paid_work(tmp_p
         await runner.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["recheck", "takeover"])
+def test_empty_section_heading_cannot_escape_fact_checks(tmp_path, action):
+    from app.models import Section
+
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    content = record.content.model_copy(update={"sections": [*record.content.sections,
+                                        Section(id="unreviewed-heading", title="Redis 精通，性能提升 99%", items=[])]})
+    store.save(record.id, 1, content)
+    if action == "takeover":
+        with pytest.raises(Conflict):
+            runner.takeover(record.id, 2)
+    else:
+        recheck = runner.recheck(record.id, 2, "heading-check-001")
+        asyncio.run(runner.run_one())
+        result = jobs.get(recheck["id"])
+        assert any(issue["item_id"] == "unreviewed-heading" for issue in result["issues"])
+        assert store.get(record.id).ai.review_status == "blocked"
+
+
+@pytest.mark.parametrize("case", ["long_item", "many_items", "many_sections", "long_document"])
+def test_all_editor_limits_are_supported_by_recheck_and_manual_takeover(tmp_path, case):
+    from app.models import Item, Section
+
+    runner, jobs, store, _, model = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    if case == "long_item":
+        sections = [Section(id="s", title="项目经历", items=[Item(id="long", text="一" * 2001)])]
+    elif case == "many_items":
+        sections = [Section(id="s", title="项目经历", items=[Item(id=f"i{index}", text="编写测试记录") for index in range(16)])]
+    elif case == "many_sections":
+        sections = [Section(id=f"s{index}", title="项目经历", items=[Item(id=f"i{index}", text="编写测试记录")]) for index in range(9)]
+    else:
+        sections = [Section(id=f"s{index}", title="项目经历", items=[Item(id=f"i{index}", text="一" * 1900)]) for index in range(8)]
+    store.save(record.id, 1, record.content.model_copy(update={"sections": sections}))
+    takeover = runner.takeover(record.id, 2)
+    assert takeover.ai.manual_takeover
+    recheck = runner.recheck(record.id, 2, f"limit-check-{case}")
+    asyncio.run(runner.run_one())
+    assert jobs.get(recheck["id"])["state"] == "ready"
+    sent = model.calls[-1][1]["candidate"]["sections"]
+    assert sum(len(i["text"]) for s in sent for i in s["items"]) == sum(len(i.text) for s in sections for i in s.items)
+
+
+@pytest.mark.parametrize("reinsert_id", ["item1", "renamed-item"])
+def test_removed_problem_item_can_be_manually_resolved_without_model(tmp_path, reinsert_id):
+    from app.exports import check_export
+    from app.models import ExportRequest, Item
+
+    draft = json.loads(json.dumps(DRAFT))
+    draft["sections"][0]["items"].append({"id": "item2", "text": "编写测试记录。", "fact_ids": ["e1"]})
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, draft, BLOCK, draft, BLOCK, draft, BLOCK])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    content = record.content.model_copy(deep=True)
+    content.sections[0].items = [item for item in content.sections[0].items if item.id != "item1"]
+    store.save(record.id, 1, content)
+    runner.registry = ModelRegistry()
+    adopted = runner.takeover(record.id, 2)
+    assert adopted.ai.manual_takeover
+    assert adopted.ai.issues[0]["resolution"]["action"] == "deleted"
+    assert "resolution" not in jobs.get(job["id"])["issues"][0]
+    store.confirm(record.id, 2)
+    check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=2))
+    content.sections[0].items.append(Item(id=reinsert_id, text=DRAFT["sections"][0]["items"][0]["text"]))
+    store.save(record.id, 2, content)
+    with pytest.raises(Conflict):
+        runner.takeover(record.id, 3)
+
+
+def test_legitimate_empty_heading_is_sent_to_reviewer_without_omission(tmp_path):
+    from app.models import Section
+
+    runner, _, store, _, model = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    content = record.content.model_copy(update={"sections": [*record.content.sections, Section(id="empty", title="教育背景", items=[])]})
+    store.save(record.id, 1, content)
+    runner.recheck(record.id, 2, "empty-heading-full")
+    asyncio.run(runner.run_one())
+    assert model.calls[-1][1]["candidate"]["sections"][-1] == {"id": "empty", "title": "教育背景", "items": []}

@@ -65,7 +65,7 @@ def run(output: Path, executable: Path | None):
                     expect(page.get_by_role("heading", name="简历工作台", exact=True)).to_be_visible()
                     expect(page.get_by_role("button", name="＋ 新建简历")).to_be_enabled()
                     material = "未保存的真实输入线索，不应因切换被清空"
-                    page.locator("form textarea").fill(material)
+                    page.get_by_label("现有材料", exact=True).fill(material)
                     dialogs = []
 
                     def keep_material(dialog):
@@ -74,17 +74,17 @@ def run(output: Path, executable: Path | None):
 
                     page.on("dialog", keep_material)
                     page.get_by_role("button", name="＋ 新建简历").click()
-                    assert page.locator("form textarea").input_value() == material
+                    assert page.get_by_label("现有材料", exact=True).input_value() == material
                     assert len(dialogs) == 1
                     page.get_by_role("button", name="先用虚构示例体验 →").click()
-                    assert page.locator("form textarea").input_value() == material
+                    assert page.get_by_label("现有材料", exact=True).input_value() == material
                     assert len(dialogs) == 2
                     assert page.evaluate("""() => {
                         const event = new Event('beforeunload', { cancelable: true });
                         window.dispatchEvent(event); return event.defaultPrevented;
                     }""") is True
                     page.remove_listener("dialog", keep_material)
-                    page.locator("form textarea").fill("")
+                    page.get_by_label("现有材料", exact=True).fill("")
                     page.get_by_role("button", name="先用虚构示例体验 →").click()
                     expect(page.get_by_role("heading", name="编辑内容")).to_be_visible()
                     page.get_by_label("姓名", exact=True).fill("陈亦宁（演示修改）")
@@ -119,7 +119,7 @@ def run(output: Path, executable: Path | None):
                     page.get_by_label("姓名", exact=True).fill("测试用户")
                     page.get_by_label("目标岗位", exact=True).fill("产品经理")
                     page.get_by_label("联系方式", exact=True).fill("test@example.com")
-                    page.locator("form textarea").fill("校园预约项目：整理同学反馈，画出预约流程草图。\n本人编写需求说明，并与同学核对方案；未提供上线收益。")
+                    page.get_by_label("现有材料", exact=True).fill("校园预约项目：整理同学反馈，画出预约流程草图。\n本人编写需求说明，并与同学核对方案；未提供上线收益。")
                     page.get_by_role("button", name="进入编辑器 →").click()
                     expect(page.get_by_role("heading", name="编辑内容")).to_be_visible()
                     with page.expect_download(timeout=65000) as downloaded:

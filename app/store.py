@@ -73,6 +73,29 @@ def make_facts(content: ResumeContent, origin: str, previous: list[Fact]) -> lis
             for block, text in blocks]
 
 
+def resolve_deleted_issues(current: ResumeRecord, content: ResumeContent, revision: int) -> list[dict]:
+    def blocks(value):
+        return {**{s.id: s.title for s in value.sections},
+                **{i.id: i.text for s in value.sections for i in s.items},
+                **({"__summary": value.summary} if value.summary else {})}
+
+    previous = blocks(current.content)
+    present = blocks(content)
+    texts = ["".join(text.split()) for text in present.values()]
+    issues = []
+    for original in current.ai.issues:
+        issue = {key: value for key, value in original.items() if key != "resolution"}
+        location = issue.get("item_id", "document")
+        observed = issue.get("observed_text") or previous.get(location, "")
+        if observed:
+            issue["observed_text"] = observed
+        if (issue.get("severity") == "blocking" and location != "document" and location not in present and observed
+                and not any("".join(observed.split()) in text for text in texts)):
+            issue["resolution"] = {"action": "deleted", "revision": revision, "review_job_id": current.ai.review_job_id}
+        issues.append(issue)
+    return issues
+
+
 class ResumeStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +172,8 @@ class ResumeStore:
             changed = current.model_copy(update={"revision": expected_revision + 1, "confirmed_revision": None,
                                                   "content": content, "facts": facts, "updated_at": timestamp()})
             if current.ai:
-                changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False})
+                changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False,
+                                                           "issues": resolve_deleted_issues(current, content, changed.revision)})
             result = connection.execute(update(resumes).where(
                 resumes.c.id == resume_id, resumes.c.revision == expected_revision,
             ).values(revision=changed.revision, confirmed_revision=None, content=content.model_dump_json(),

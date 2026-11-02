@@ -55,6 +55,9 @@ class AIInfo(StrictModel):
     issues: list[dict] = Field(default_factory=list)
     manual_takeover: bool = False
 
+    def has_blockers(self) -> bool:
+        return any(i.get("severity") == "blocking" and i.get("resolution", {}).get("action") != "deleted" for i in self.issues)
+
 
 def resume_hash(content: ResumeContent) -> str:
     return hashlib.sha256(json.dumps(content.model_dump(), ensure_ascii=False, sort_keys=True).encode()).hexdigest()

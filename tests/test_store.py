@@ -1,6 +1,28 @@
 import pytest
 
 
+def test_m0_database_and_snapshots_remain_readable_after_m1_upgrade(tmp_path):
+    import json
+    import sqlite3
+
+    from app.store import ResumeStore
+
+    path = tmp_path / "legacy.sqlite3"
+    old = ResumeStore(path)
+    record = old.create(content(), "manual", "原有材料")
+    old.engine.dispose()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE resume_ai_versions")
+        snapshot = json.loads(connection.execute("SELECT snapshot FROM resume_versions").fetchone()[0])
+        snapshot.pop("ai")
+        connection.execute("UPDATE resume_versions SET snapshot = ?", (json.dumps(snapshot, ensure_ascii=False),))
+    upgraded = ResumeStore(path)
+    restored = upgraded.get(record.id)
+    assert restored.content == record.content and restored.facts == record.facts
+    assert restored.ai is None
+    assert upgraded.history(record.id)[0].content == record.content
+
+
 def content(text="使用 Java 完成课程项目的订单查询接口"):
     from app.models import ResumeContent
 

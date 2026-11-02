@@ -1,61 +1,89 @@
 # Match-Trajectory
 
-开源 AI 简历工作台。当前已实现 M0：可以录入材料、编辑预览、保存修订、核对并导出中文 PDF／可编辑 DOCX。
+帮助互联网求职者用少量材料，生成、核对并交付简历的开源 AI 工作台。当前为 **M1 开发版**，支持 AI 生成闭环及无需模型的手工编辑。
 
-**当前不是完整 AI 简历生成产品。** 演示内容为虚构；手工材料按原意进入编辑器，不会自动扩写。模型设置只提供连接探针，尚未验证真实供应商和完整 Agent 流程。
+## 开始使用
 
-## 在当前工作区启动
+1. 双击根目录 `Start-App.cmd`，浏览器打开本机工作台。
+2. 点击左下角“模型连接”，选择 DeepSeek，填写 Key，测试并保存。默认模型为 `deepseek-flash`，地址已预设。
+3. 填写目标岗位，粘贴已有经历；姓名、联系方式可以稍后补充，JD 可选。不需要公司职级。
+4. 确认发送材料后点击“AI 生成简历”；若有补问，可回答，也可跳过。
+5. 对照材料查看候选，点击“采用并进入编辑器”。修改后重新审阅，核对当前版本并导出 PDF／Word。
 
-双击根目录的 `Start-App.cmd`，或在 PowerShell 执行：
+Key 只保留在本次服务内存中，重启需要重新填写。生成可能产生模型费用；失败后继续会保留已用预算。连接测试成功只代表短文本探针通过，不代表完整生成质量得到验证。
+
+姓名与联系方式单独保留在本机；你主动写在材料正文中的隐私也会随正文发送。资料在项目 `data/`，不提交到 Git。
+
+不使用模型时，填写材料后点击“进入编辑器”，仍可编辑、保存、确认和导出。也可使用明确标为虚构的示例体验。
+
+在 PowerShell 中启动：
 
 ```powershell
+cd D:\AI-VibeCoding\mx_demo\Match-Trajectory
 .\scripts\Start-App.ps1
 ```
 
-浏览器会打开本机页面。资料位于项目 `data/`，不进入 Git；关闭服务窗口或按 `Ctrl+C` 停止。保存后可刷新恢复，未保存的编辑应先点击“保存修改”。
+运行期间保留终端，按 `Ctrl+C` 停止。当前启动器兼容 Windows 自带 PowerShell；全新克隆先按下文重建环境。便携程序已在开发机验证，仍不是完成干净系统与再分发许可核验的公开发布包。
 
-该入口使用下文已配置的开发环境；全新克隆需先完成环境重建。便携包目前是本机探针产物，尚未完成干净 Windows 和第三方再分发许可核验，不能视为公开发布版。
+## 怎样生成与核对
 
-## 当前能力与验证边界
+```mermaid
+flowchart LR
+  A[目标与少量材料] --> B[保存原文与岗位规则]
+  B --> C[选材与可跳过的补问]
+  C --> D[生成候选]
+  D --> E[程序检查与独立审阅]
+  E -->|有限修正| D
+  E --> F[用户查看并采用]
+  F --> G[编辑与重新核对]
+  G --> H[确认当前版本并导出]
+```
 
-| 已实现 | 尚待完成或验证 |
+- 五类规则：后端、算法、数据分析、产品、内容／用户运营；其他方向回退通用规则，未声称专项验证。
+- 没有 JD 时使用维护的通用画像，不把岗位要求写成个人事实。缺数字或结果时保留已有动作，不编收益。
+- 最多一轮三个问题、两轮内容修正、八次模型请求；单请求 45 秒、累计执行 180 秒，等待回答不计时。
+- 任务保存在 SQLite。刷新可恢复查看；重启后未完成任务标为中断，不自动重放付费请求。继续需连接原供应商、地址和模型。
+- 候选采用为新简历，原简历不覆盖。编辑使 AI 审阅失效；有未解决阻断时只可导出草稿。
+- 可以明确选择“自行核对并接管”。已知问题不能直接清空；删除原问题条目会记录解决动作，保留旧报告，复制到新 ID 不算删除解决。复杂误判仍需重审，目前没有填写原文依据的逐问题人工裁决界面。
+
+运行规则位于 [Skill 目录](skills/resume-writing/SKILL.md)，由应用按岗位和阶段加载。模型没有文件、命令或数据库执行权限。
+
+## 当前范围
+
+| 已实现 | 仍需完成或验证 |
 | --- | --- |
-| 手工材料与明确标识的虚构示例 | 五方向 Skill、岗位画像与 AI 自动生成 |
-| 直接编辑、实时预览、保存、历史记录 | 完整任务中断恢复、资料删除与备份界面 |
-| 版本冲突检测，修改后确认失效 | Agent 独立审阅、事实依赖全链路失效 |
-| 中文 PDF、可编辑 Word、草稿标识 | 干净 Windows／Docker、Word／WPS 版式专项验证 |
-| 本地会话、跨站限制、Key 掩码与会话保存 | 两种供应商的真实模型调用及真实用户试用 |
+| 粘贴文字、可选 JD、五方向规则、候选生成与审阅 | 上传解析、个人资料库、原材料修订与全链路失效 |
+| 任务状态、补问跳过、取消、明确继续与幂等采用 | 资料删除、备份恢复、完整凭据持久化 |
+| 逐版本审阅、用户确认、中文 PDF／可编辑 DOCX | Word／WPS 专项排版与干净系统安装 |
+| 本地会话与跨站检查、受限请求、Key 脱敏 | DeepSeek／百炼真实全流程与真实用户效果测试 |
 
-## 开发验证
+引用存在、规则检查和 AI 审阅不能证明绝对真实；所有事实仍需用户核对。“80% 可用”是待验证目标，当前不宣称达到。
+
+## 开发与验收
 
 ```powershell
 .\scripts\Test-App.ps1
-```
-
-真实浏览器与文件探针（先加载开发环境）：
-
-```powershell
 . .\scripts\Enter-DevEnvironment.ps1
 $env:MATCH_TRAJECTORY_FONT_PATH = Join-Path $env:MATCH_TRAJECTORY_ENV_ROOT 'runtimes\fonts\NotoSansCJKsc-Regular.otf'
-python tools\smoke_m0.py --output artifacts\m0-source-smoke
+python tools\smoke_m0.py --output artifacts\manual-smoke
+python tools\smoke_m1.py --output artifacts\generation-smoke
 .\scripts\Build-Portable.ps1
-python tools\smoke_m0.py --executable dist\MatchTrajectory\MatchTrajectory.exe --output artifacts\m0-frozen-smoke
+python tools\smoke_m1.py --executable dist\MatchTrajectory\MatchTrajectory.exe --output artifacts\frozen-generation-smoke
 ```
 
-本地报告与截图位于 `artifacts/`，构建产物位于 `dist/`，均不提交。探针只用构造材料；模拟传输测试不代表真实供应商验证。
+2026-11-02：88 项后端测试通过，TypeScript、Vite 和 Ruff 通过。覆盖来源、引用、模型异常、补问、取消迟到结果、重启、存储故障、预算、并发编辑、审阅门禁、旧数据库兼容及文件交付；有一条 Starlette／httpx 上游弃用提示。
 
-2026-11-02 验证记录：35 项后端测试通过（包含实际中文 PDF），TypeScript、Vite 构建和 Ruff 检查通过。已修复未保存材料切换保护、短 Key 掩码、连接探针响应大小／总耗时限制，以及重复导出覆盖旧文件。测试存在一条 Starlette／httpx 上游弃用提示。
+浏览器验收中的模型服务为 **本地确定性 HTTP 测试服务**，不会发送到真实供应商；用于检验操作和协议，不能证明真实模型质量。真实供应商全流程、用户试用、干净系统验证目前均为 0。
 
-最终源码与重新构建的 Windows `.exe` 均通过真实浏览器流程：材料保护、编辑、保存后刷新恢复、PDF／DOCX 下载、模型设置界面和未授权资料访问检查，页面脚本错误为 0。报告分别位于 `artifacts/m0-delivery-source/report.json` 与 `artifacts/m0-delivery-frozen/report.json`。这是当前开发机上的验证；真实模型调用与干净系统验证仍为 0。
+报告与截图在 `artifacts/`，构建在 `dist/`，均不提交。打包器遇到已有资料目录时拒绝覆盖，可用 `-OutputRoot dist-next` 另选项目内目录。
 
-## 设计与执行方案
+## 设计与执行
 
-当前设计分为三份，所列业务能力尚待实现：
-
-- [产品方案](docs/互联网求职简历Agent产品设计方案.md)：目标用户、首版范围、交互与验收。
-- [Skill 设计](docs/简历Skill设计方案.md)：好简历的标准、选材、写作与岗位差异。
-- [Agent 架构](docs/简历Agent架构设计方案.md)：执行流程、工具、版本、恢复与部署。
-- [M0 执行方案](docs/superpowers/plans/2026-11-02-resume-m0.md)：本轮任务、测试与后续阶段。
+- [产品方案](docs/互联网求职简历Agent产品设计方案.md)
+- [Skill 方案](docs/简历Skill设计方案.md)
+- [Agent 方案](docs/简历Agent架构设计方案.md)
+- [M0 执行记录](docs/superpowers/plans/2026-11-02-resume-m0.md)
+- [M1 执行记录](docs/superpowers/plans/2026-11-02-resume-m1.md)
 
 ## Windows 开发环境
 

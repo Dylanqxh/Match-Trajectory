@@ -1,6 +1,12 @@
-import uuid
 
-from app.generation_models import AnswerInput, Claim, Draft, DraftSection, GenerationInput
+from app.generation_models import (
+    AnswerInput,
+    Draft,
+    GenerationInput,
+    ReviewClaim,
+    ReviewDraft,
+    ReviewSection,
+)
 from app.jobs import JobStore, fingerprint
 from app.model_client import ModelRegistry
 from app.models import AIInfo, ResumeContent, resume_hash
@@ -8,15 +14,15 @@ from app.skill import build_evidence, load_skill, validate_draft
 from app.store import Conflict, ResumeStore
 
 
-def content_draft(content, evidence, source_map) -> Draft:
+def content_draft(content, evidence, source_map) -> ReviewDraft:
     refs = [e["id"] for e in evidence]
 
     def claim(item_id, text):
-        return Claim(id=item_id, text=text, fact_ids=source_map.get(item_id) or refs)
+        return ReviewClaim(id=item_id, text=text, fact_ids=source_map.get(item_id) or refs)
 
-    return Draft(summary=claim("__summary", content.summary) if content.summary else None,
-                 sections=[DraftSection(id=s.id, title=s.title, items=[claim(i.id, i.text) for i in s.items])
-                           for s in content.sections if s.items])
+    return ReviewDraft(summary=claim("__summary", content.summary) if content.summary else None,
+                       sections=[ReviewSection(id=s.id, title=s.title, items=[claim(i.id, i.text) for i in s.items])
+                                 for s in content.sections])
 
 
 class GenerationService:
@@ -138,7 +144,7 @@ class GenerationService:
             record = self.store._read(connection, resume_id)
             if record.revision != revision or not record.ai:
                 raise Conflict("版本已变化或当前不是 AI 简历")
-            if any(i.get("severity") == "blocking" for i in record.ai.issues):
+            if record.ai.has_blockers():
                 raise Conflict("仍有已知阻断，请先修正并重新审阅，不能直接切换标签消除")
             original = self.jobs._get(connection, record.ai.job_id)
             if original["evidence"]:

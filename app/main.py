@@ -1,0 +1,176 @@
+import secrets
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from app.demo import demo_content
+from app.models import (
+    CreateResume,
+    ExportRequest,
+    Item,
+    ResumeContent,
+    RevisionRequest,
+    SaveResume,
+    Section,
+)
+from app.store import Conflict, NotFound, ResumeStore
+
+
+def resource_root() -> Path:
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+
+
+def create_app(data_dir: Path, *, web_dir: Path | None = None) -> FastAPI:
+    store = ResumeStore(data_dir / "resumes.sqlite3")
+
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+        store.engine.dispose()
+
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.store = store
+    app.state.data_dir = data_dir
+    app.state.provider = None
+    app.state.provider_key = None
+    session = secrets.token_urlsafe(32)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+
+    @app.middleware("http")
+    async def local_session(request: Request, call_next):
+        if request.url.path.startswith("/api/"):
+            origin = request.headers.get("origin")
+            if origin and origin != str(request.base_url).rstrip("/"):
+                return JSONResponse({"detail": "仅接受本地页面的请求"}, status_code=403)
+            if request.url.path != "/api/session":
+                cookie = request.cookies.get("mt_session", "")
+                if not secrets.compare_digest(cookie, session):
+                    return JSONResponse({"detail": "请从本机工作台打开"}, status_code=401)
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+        )
+        return response
+
+    @app.exception_handler(Conflict)
+    async def conflict_handler(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(NotFound)
+    async def not_found_handler(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_handler(request, exc):
+        return JSONResponse({"detail": "输入不符合要求，请检查长度、空段落和字段类型",
+                             "fields": [".".join(map(str, error["loc"])) for error in exc.errors()]}, status_code=422)
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok", "milestone": "m0", "ai_generation": False}
+
+    @app.get("/api/session")
+    def initialize_session():
+        response = JSONResponse({"status": "ready", "milestone": "m0"})
+        response.set_cookie("mt_session", session, httponly=True, samesite="strict", path="/")
+        return response
+
+    @app.get("/api/resumes")
+    def list_resumes():
+        return store.list()
+
+    @app.post("/api/resumes", status_code=201)
+    def create_resume(body: CreateResume):
+        text = body.source_text
+        items = [Item(id=f"material-{i // 4000}", text=text[i:i + 4000])
+                 for i in range(0, len(text), 4000) if text[i:i + 4000].strip()]
+        sections = [Section(id="experience", title="经历与实践", items=items)] if items else []
+        content = ResumeContent(name=body.name, target_role=body.target_role, contact=body.contact, sections=sections)
+        return store.create(content, "manual", text)
+
+    @app.post("/api/demo", status_code=201)
+    def create_demo():
+        return store.create(demo_content(), "demo")
+
+    @app.get("/api/resumes/{resume_id}")
+    def get_resume(resume_id: str):
+        return store.get(resume_id)
+
+    @app.get("/api/resumes/{resume_id}/history")
+    def history(resume_id: str):
+        return store.history(resume_id)
+
+    @app.put("/api/resumes/{resume_id}")
+    def save_resume(resume_id: str, body: SaveResume):
+        return store.save(resume_id, body.expected_revision, body.content)
+
+    @app.post("/api/resumes/{resume_id}/confirm")
+    def confirm_resume(resume_id: str, body: RevisionRequest):
+        return store.confirm(resume_id, body.expected_revision)
+
+    from app.exports import IncompleteResume, export_resume
+    from app.processes import WorkerFailure
+    from app.rendering import font_path, render_html
+
+    @app.exception_handler(WorkerFailure)
+    async def export_error_handler(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+
+    @app.exception_handler(IncompleteResume)
+    async def incomplete_handler(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.post("/api/resumes/{resume_id}/exports")
+    def export_file(resume_id: str, body: ExportRequest):
+        path = export_resume(store, data_dir, resume_id, body)
+        media = "application/pdf" if body.format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return FileResponse(path, media_type=media, filename=path.name)
+
+    @app.post("/api/preview", response_class=HTMLResponse)
+    def preview(body: ResumeContent, demo: bool = False):
+        return render_html(body, demo=demo)
+
+    @app.get("/api/font")
+    def resume_font():
+        path = font_path()
+        if not path.is_file():
+            return JSONResponse({"detail": "中文字体未配置"}, status_code=404)
+        return FileResponse(path, media_type="font/otf")
+
+    from app import providers
+
+    @app.exception_handler(providers.ProviderError)
+    async def provider_error_handler(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.get("/api/model-settings")
+    def model_settings():
+        return app.state.provider or {"configured": False, "resume_generation_verified": False}
+
+    @app.get("/api/model-presets")
+    def model_presets():
+        return providers.PRESETS
+
+    @app.post("/api/model-settings/test")
+    async def test_model_settings(body: providers.ProviderConfig):
+        result = await providers.probe_provider(body)
+        app.state.provider, app.state.provider_key = result, body.api_key
+        return result
+
+    web = web_dir or resource_root() / "web" / "dist"
+    if web.is_dir():
+        app.mount("/", StaticFiles(directory=web, html=True), name="workbench")
+    else:
+        @app.get("/")
+        def missing_frontend():
+            return HTMLResponse("<h1>Match-Trajectory</h1><p>前端尚未构建，请执行 npm run build。</p>")
+    return app

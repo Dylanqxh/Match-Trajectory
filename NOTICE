@@ -1,0 +1,7 @@
+Match-Trajectory
+Copyright 2026 Match-Trajectory contributors.
+
+The project code is licensed under Apache-2.0. Third-party dependencies and
+optional runtime assets retain their own licenses. Portable M0 probe builds
+are not public releases and require a complete redistribution license review.
+The included font runtime, when packaged, carries its separate license.

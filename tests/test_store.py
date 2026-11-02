@@ -59,6 +59,7 @@ def test_demo_origin_cannot_be_removed_by_editing(tmp_path):
 
 def test_empty_or_duplicate_bullets_and_overlong_content_are_rejected():
     from pydantic import ValidationError
+
     from app.models import ResumeContent
 
     with pytest.raises(ValidationError):

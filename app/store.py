@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from sqlalchemy import Column, Integer, MetaData, String, Table, Text, create_engine, event, insert, select, update
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    event,
+    insert,
+    select,
+    update,
+)
 
 from app.models import Fact, ResumeContent, ResumeRecord
 
@@ -41,7 +53,7 @@ versions = Table(
 
 
 def timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def make_facts(content: ResumeContent, origin: str, previous: list[Fact]) -> list[Fact]:

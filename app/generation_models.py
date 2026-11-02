@@ -41,7 +41,7 @@ class Claim(StrictModel):
 
 class DraftSection(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
-    title: Literal["教育背景", "工作经历", "项目经历", "研究经历", "技能与实践", "作品与活动", "个人优势"]
+    title: str = Field(min_length=1, max_length=60)
     items: list[Claim] = Field(min_length=1, max_length=15)
 
 

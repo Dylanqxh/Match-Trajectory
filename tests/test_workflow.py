@@ -1,0 +1,278 @@
+import asyncio
+import json
+
+import pytest
+
+from app.generation_models import GenerationInput
+from app.model_client import Completion, ModelRegistry
+from app.providers import ProviderConfig, ProviderError
+from app.store import Conflict, ResumeStore
+
+MATERIAL = "使用 Java 完成课程预约查询接口，编写测试记录，未上线。"
+DRAFT = {"sections": [{"id": "projects", "title": "项目经历", "items": [
+    {"id": "item1", "text": "使用 Java 完成课程预约查询接口，并编写测试记录。", "fact_ids": ["e1"]},
+]}]}
+PLAN = {"decision": "draft", "selected_fact_ids": ["e1"], "focus": ["接口实现"], "gaps": ["缺少结果数据"]}
+PASS = {"verdict": "pass", "issues": [], "strengths": ["个人动作明确"]}
+BLOCK = {"verdict": "blocked", "issues": [{"item_id": "item1", "severity": "blocking", "code": "unsupported", "message": "缺少依据"}]}
+
+
+class ScriptedModel:
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.calls = []
+
+    async def complete(self, config, stage, context, schema):
+        self.calls.append((stage, context, config.model))
+        output = self.outputs.pop(0)
+        if isinstance(output, Exception):
+            raise output
+        return Completion(schema.model_validate(output), {"total_tokens": 10})
+
+
+def setup(tmp_path, outputs):
+    from app.jobs import JobStore
+    from app.workflow import Workflow
+
+    store = ResumeStore(tmp_path / "resumes.sqlite3")
+    jobs = JobStore(store)
+    registry = ModelRegistry()
+    registry.register(ProviderConfig(provider="custom", base_url="http://127.0.0.1:12345/v1", model="original-model", api_key="private-key-not-on-disk"))
+    model = ScriptedModel(outputs)
+    return Workflow(store, jobs, registry, model), jobs, store, registry, model
+
+
+def request(**kwargs):
+    return GenerationInput(request_id="request-0001", target_role="Java 后端", name="测试用户", contact="me@example.com",
+                           source_text=kwargs.pop("source_text", MATERIAL), send_materials=True, **kwargs)
+
+
+def test_generation_is_idempotent_and_candidate_must_be_adopted(tmp_path):
+    runner, jobs, store, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    assert runner.submit(request())["id"] == job["id"]
+    with pytest.raises(Conflict):
+        runner.submit(request(source_text="不同材料"))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "ready" and finished["review"]["verdict"] == "pass"
+    assert finished["calls"] == 3
+    assert store.list() == []
+    review_context = model.calls[-1][1]
+    assert "plan" not in review_context and "focus" not in review_context
+    assert MATERIAL in json.dumps(review_context, ensure_ascii=False)
+    assert "me@example.com" not in json.dumps(model.calls, ensure_ascii=False)
+    resume = runner.adopt(job["id"])
+    assert runner.adopt(job["id"]).id == resume.id
+    assert resume.origin == "ai" and resume.ai.review_status == "passed"
+    assert len(store.list()) == 1
+    assert "private-key-not-on-disk" not in json.dumps(finished)
+
+
+def test_questions_can_be_skipped_once_and_do_not_reset_budget(tmp_path):
+    ask = {"decision": "ask", "selected_fact_ids": ["e1"], "questions": [{"id": "q1", "text": "本人交付了什么？"}]}
+    runner, jobs, _, _, model = setup(tmp_path, [ask, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    waiting = jobs.get(job["id"])
+    assert waiting["state"] == "waiting_input" and waiting["calls"] == 1
+    payload = {"question_group": waiting["question_group"], "skip": True, "answers": {}}
+    runner.answer(job["id"], payload)
+    runner.answer(job["id"], payload)
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["calls"] == 3
+    assert model.calls[1][0] == "draft"
+
+
+def test_no_personal_material_produces_framework_without_model_call(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [])
+    job = runner.submit(request(source_text=""))
+    assert jobs.get(job["id"])["state"] == "ready"
+    assert jobs.get(job["id"])["framework"] is True
+    assert model.calls == []
+
+
+def test_blocked_review_is_not_passed_and_only_two_revisions_are_allowed(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, BLOCK, DRAFT, BLOCK, DRAFT, BLOCK])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready" and result["review"]["verdict"] == "blocked"
+    assert result["revisions"] == 2 and result["calls"] == 7
+    assert len(model.calls) == 7
+    assert runner.adopt(job["id"]).ai.review_status == "blocked"
+
+
+def test_cancel_discards_late_response(tmp_path):
+    runner, jobs, store, _, _ = setup(tmp_path, [])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowModel:
+        async def complete(self, config, stage, context, schema):
+            entered.set()
+            await release.wait()
+            return Completion(schema.model_validate(PLAN), {})
+
+    runner.client = SlowModel()
+    job = runner.submit(request())
+
+    async def run():
+        task = asyncio.create_task(runner.run_one())
+        await entered.wait()
+        runner.cancel(job["id"])
+        release.set()
+        await task
+
+    asyncio.run(run())
+    assert jobs.get(job["id"])["state"] == "cancelled"
+    assert jobs.get(job["id"])["plan"] is None
+    assert store.list() == []
+
+
+def test_model_failure_resume_keeps_completed_steps_and_pinned_config(tmp_path):
+    runner, jobs, _, registry, model = setup(tmp_path, [PLAN, ProviderError("模型限流"), DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "failed"
+    registry.register(ProviderConfig(provider="custom", base_url="http://127.0.0.1:54321/v1", model="different-model", api_key="new-secret"))
+    with pytest.raises(Conflict):
+        runner.resume(job["id"])
+    registry.register(ProviderConfig(provider="custom", base_url="http://127.0.0.1:12345/v1", model="original-model", api_key="new-secret"))
+    runner.resume(job["id"])
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["calls"] == 4
+    assert [c[0] for c in model.calls] == ["plan", "draft", "draft", "review"]
+
+
+def test_restart_marks_unfinished_jobs_interrupted_without_spending_calls(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [])
+    job = runner.submit(request())
+    jobs.recover_unfinished()
+    assert jobs.get(job["id"])["state"] == "interrupted"
+    assert jobs.get(job["id"])["calls"] == 0 and model.calls == []
+
+
+def test_program_check_blocks_invented_metric_before_semantic_review(tmp_path):
+    wrong = {"sections": [{"id": "p", "title": "项目经历", "items": [
+        {"id": "item1", "text": "性能提升 99%", "fact_ids": ["e1"]},
+    ]}]}
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, wrong, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert [c[0] for c in model.calls] == ["plan", "draft", "revise", "review"]
+    assert jobs.get(job["id"])["review"]["verdict"] == "pass"
+
+
+def test_ai_edit_invalidates_review_and_confirmation_cannot_bypass_export_gate(tmp_path):
+    from app.exports import check_export
+    from app.models import ExportRequest
+
+    runner, _, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    resume = runner.adopt(job["id"])
+    store.confirm(resume.id, 1)
+    check_export(store.get(resume.id), ExportRequest(format="docx", expected_revision=1))
+    changed = store.save(resume.id, 1, resume.content.model_copy(update={"summary": "自己修改的介绍"}))
+    assert changed.ai.review_status == "unreviewed"
+    store.confirm(resume.id, 2)
+    with pytest.raises(Conflict):
+        check_export(store.get(resume.id), ExportRequest(format="docx", expected_revision=2))
+
+
+def test_recheck_modified_resume_then_formal_export_is_allowed(tmp_path):
+    from app.exports import check_export
+    from app.models import ExportRequest
+
+    runner, jobs, store, _, model = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    resume = runner.adopt(job["id"])
+    content = resume.content.model_copy(update={"name": "新姓名"})
+    store.save(resume.id, 1, content)
+    review = runner.recheck(resume.id, 2, "recheck-0001")
+    asyncio.run(runner.run_one())
+    assert jobs.get(review["id"])["state"] == "ready"
+    current = store.get(resume.id)
+    assert current.ai.review_status == "passed" and current.content.name == "新姓名"
+    store.confirm(resume.id, 2)
+    check_export(store.get(resume.id), ExportRequest(format="docx", expected_revision=2))
+    assert model.calls[-1][0] == "review"
+
+
+def test_known_blocking_issues_cannot_be_cleared_by_manual_takeover(tmp_path):
+    runner, _, _, _, _ = setup(tmp_path, [PLAN, DRAFT, BLOCK, DRAFT, BLOCK, DRAFT, BLOCK])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    resume = runner.adopt(job["id"])
+    with pytest.raises(Conflict):
+        runner.takeover(resume.id, 1)
+
+
+def test_review_failure_still_allows_adopting_a_clearly_unreviewed_draft(tmp_path):
+    runner, jobs, _, _, _ = setup(tmp_path, [PLAN, DRAFT, ProviderError("模型暂时不可用")])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "failed"
+    resume = runner.adopt(job["id"])
+    assert resume.ai.review_status == "unreviewed"
+
+
+def test_missing_credential_does_not_charge_a_model_call(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [])
+    job = runner.submit(request())
+    runner.registry = ModelRegistry()
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["calls"] == 0
+    assert model.calls == []
+
+
+def test_structural_retry_is_bounded_and_charged(tmp_path):
+    from app.model_client import ModelOutputError
+
+    runner, jobs, _, _, model = setup(tmp_path, [ModelOutputError("结构错误"), ModelOutputError("结构错误")])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "failed"
+    assert jobs.get(job["id"])["calls"] == 2 and len(model.calls) == 2
+    with pytest.raises(Conflict):
+        runner.resume(job["id"])
+
+
+def test_budget_is_preserved_and_never_spends_ninth_call(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN])
+    job = runner.submit(request())
+    jobs.mutate(job["id"], lambda j, _: j.update(calls=7))
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["calls"] == 8 and len(model.calls) == 1
+    assert jobs.get(job["id"])["plan"] is not None
+    with pytest.raises(Conflict):
+        runner.resume(job["id"])
+
+
+def test_config_switch_does_not_change_an_inflight_tasks_provider(tmp_path):
+    runner, jobs, _, registry, model = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    registry.register(ProviderConfig(provider="custom", base_url="http://127.0.0.1:54321", model="different", api_key="another-key"))
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "ready"
+    assert {call[2] for call in model.calls} == {"original-model"}
+
+
+def test_edit_during_recheck_cannot_attach_stale_pass(tmp_path):
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    recheck = runner.recheck(record.id, 1, "recheck-race-001")
+
+    class EditingReviewer:
+        async def complete(self, config, stage, context, schema):
+            store.save(record.id, 1, record.content.model_copy(update={"name": "并发修改"}))
+            return Completion(schema.model_validate(PASS), {})
+
+    runner.client = EditingReviewer()
+    asyncio.run(runner.run_one())
+    assert jobs.get(recheck["id"])["state"] == "failed"
+    assert store.get(record.id).ai.review_status == "unreviewed"

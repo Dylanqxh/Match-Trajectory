@@ -14,13 +14,14 @@ from sqlalchemy import (
     Table,
     Text,
     create_engine,
+    delete,
     event,
     insert,
     select,
     update,
 )
 
-from app.models import Fact, ResumeContent, ResumeRecord
+from app.models import AIInfo, Fact, ResumeContent, ResumeRecord
 
 
 class Conflict(Exception):
@@ -50,6 +51,12 @@ versions = Table(
     Column("revision", Integer, primary_key=True),
     Column("snapshot", Text, nullable=False),
 )
+annotations = Table(
+    "resume_ai_versions", metadata,
+    Column("resume_id", String, primary_key=True),
+    Column("revision", Integer, primary_key=True),
+    Column("info", Text, nullable=False),
+)
 
 
 def timestamp() -> str:
@@ -62,7 +69,7 @@ def make_facts(content: ResumeContent, origin: str, previous: list[Fact]) -> lis
     if content.summary:
         blocks.append(("__summary", content.summary))
     return [Fact(id=existing.get((block, text), uuid.uuid4().hex), block_id=block, text=text,
-                 source="fictional_demo" if origin == "demo" else "user_statement")
+                 source={"demo": "fictional_demo", "ai": "ai_candidate"}.get(origin, "user_statement"))
             for block, text in blocks]
 
 
@@ -89,20 +96,40 @@ class ResumeStore:
         row = connection.execute(select(resumes).where(resumes.c.id == resume_id)).mappings().first()
         if row is None:
             raise NotFound("简历不存在")
-        return self._decode(row)
+        record = self._decode(row)
+        info = connection.execute(select(annotations.c.info).where(
+            annotations.c.resume_id == resume_id, annotations.c.revision == record.revision)).scalar_one_or_none()
+        if info:
+            record.ai = AIInfo.model_validate_json(info)
+        return record
 
-    def create(self, content: ResumeContent, origin: Literal["manual", "demo"], source_text: str = "") -> ResumeRecord:
-        if origin not in ("manual", "demo"):
+    def create(self, content: ResumeContent, origin: Literal["manual", "demo", "ai"], source_text: str = "", *,
+               ai: AIInfo | None = None, connection=None) -> ResumeRecord:
+        if origin not in ("manual", "demo", "ai") or (origin == "ai") != (ai is not None):
             raise ValueError("不支持的内容来源")
         record = ResumeRecord(id=uuid.uuid4().hex, revision=1, origin=origin, content=content,
-                              facts=make_facts(content, origin, []), created_at=timestamp(), updated_at=timestamp())
-        with self.engine.begin() as connection:
-            connection.execute(insert(resumes).values(
-                **record.model_dump(exclude={"content", "facts"}), content=content.model_dump_json(),
+                              facts=make_facts(content, origin, []), created_at=timestamp(), updated_at=timestamp(), ai=ai)
+
+        def write(conn):
+            conn.execute(insert(resumes).values(
+                **record.model_dump(exclude={"content", "facts", "ai"}), content=content.model_dump_json(),
                 facts=json.dumps([fact.model_dump() for fact in record.facts], ensure_ascii=False), source_text=source_text,
             ))
-            connection.execute(insert(versions).values(resume_id=record.id, revision=1, snapshot=record.model_dump_json()))
+            conn.execute(insert(versions).values(resume_id=record.id, revision=1, snapshot=record.model_dump_json()))
+            if ai:
+                self.write_ai(conn, record.id, 1, ai)
+
+        if connection is None:
+            with self.engine.begin() as conn:
+                write(conn)
+        else:
+            write(connection)
         return record
+
+    def write_ai(self, connection, resume_id: str, revision: int, info: AIInfo):
+        connection.execute(delete(annotations).where(annotations.c.resume_id == resume_id, annotations.c.revision == revision))
+        connection.execute(insert(annotations).values(resume_id=resume_id, revision=revision, info=info.model_dump_json()))
+        connection.execute(update(resumes).where(resumes.c.id == resume_id, resumes.c.revision == revision).values(confirmed_revision=None))
 
     def get(self, resume_id: str) -> ResumeRecord:
         with self.engine.connect() as connection:
@@ -121,6 +148,8 @@ class ResumeStore:
             facts = make_facts(content, current.origin, current.facts)
             changed = current.model_copy(update={"revision": expected_revision + 1, "confirmed_revision": None,
                                                   "content": content, "facts": facts, "updated_at": timestamp()})
+            if current.ai:
+                changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False})
             result = connection.execute(update(resumes).where(
                 resumes.c.id == resume_id, resumes.c.revision == expected_revision,
             ).values(revision=changed.revision, confirmed_revision=None, content=content.model_dump_json(),
@@ -128,6 +157,8 @@ class ResumeStore:
             if result.rowcount != 1:
                 raise Conflict("简历已在其他页面修改，请重新载入后再保存")
             connection.execute(insert(versions).values(resume_id=resume_id, revision=changed.revision, snapshot=changed.model_dump_json()))
+            if changed.ai:
+                self.write_ai(connection, resume_id, changed.revision, changed.ai)
         return changed
 
     def confirm(self, resume_id: str, expected_revision: int) -> ResumeRecord:

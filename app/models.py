@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -40,18 +42,34 @@ class Fact(StrictModel):
     id: str
     block_id: str
     text: str
-    source: Literal["user_statement", "fictional_demo"]
+    source: Literal["user_statement", "fictional_demo", "ai_candidate"]
+
+
+class AIInfo(StrictModel):
+    job_id: str
+    review_job_id: str
+    review_status: Literal["passed", "blocked", "unreviewed"]
+    content_hash: str
+    skill_version: str
+    source_map: dict[str, list[str]] = Field(default_factory=dict)
+    issues: list[dict] = Field(default_factory=list)
+    manual_takeover: bool = False
+
+
+def resume_hash(content: ResumeContent) -> str:
+    return hashlib.sha256(json.dumps(content.model_dump(), ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 class ResumeRecord(StrictModel):
     id: str
     revision: int
     confirmed_revision: int | None = None
-    origin: Literal["manual", "demo"]
+    origin: Literal["manual", "demo", "ai"]
     content: ResumeContent
     facts: list[Fact]
     created_at: str
     updated_at: str
+    ai: AIInfo | None = None
 
 
 class CreateResume(StrictModel):

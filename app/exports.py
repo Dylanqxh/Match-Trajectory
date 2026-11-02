@@ -5,7 +5,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from app.models import ExportRequest, ResumeRecord
+from app.models import ExportRequest, ResumeRecord, resume_hash
 from app.processes import run_worker
 from app.store import Conflict, ResumeStore
 
@@ -23,6 +23,12 @@ def check_export(record: ResumeRecord, request: ExportRequest):
     if record.revision != request.expected_revision:
         raise Conflict("内容版本已变化，请重新核对并导出")
     if not request.draft:
+        if record.origin == "ai":
+            info = record.ai
+            if (not info or info.content_hash != resume_hash(record.content)
+                    or any(i.get("severity") == "blocking" for i in info.issues)
+                    or (info.review_status != "passed" and not info.manual_takeover)):
+                raise Conflict("AI 内容需要当前版本审阅通过，或在无已知阻断时明确自行核对接管；现在可以导出草稿")
         if record.confirmed_revision != record.revision:
             raise Conflict("请先核对并确认当前版本")
         if not record.content.name or not record.content.contact or not any(s.items for s in record.content.sections):
@@ -48,7 +54,8 @@ def export_resume(store: ResumeStore, data_dir: Path, resume_id: str, request: E
             check_export(store._read(connection, resume_id), request)
             os.replace(temporary, path)
             manifest = {"resume_id": resume_id, "revision": snapshot.revision, "format": request.format,
-                        "draft": request.draft, "origin": snapshot.origin, "review": "manual_unreviewed",
+                        "draft": request.draft, "origin": snapshot.origin,
+                        "review": snapshot.ai.review_status if snapshot.ai else "manual_unreviewed",
                         "sha256": hashlib.sha256(data).hexdigest()}
             manifest_tmp = exports / (uuid.uuid4().hex + ".tmp")
             manifest_tmp.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")

@@ -29,6 +29,13 @@ class Handler(BaseHTTPRequestHandler):
                 output = {"verdict": "blocked", "issues": [{"item_id": "item1", "severity": "blocking", "code": "unsupported", "message": "测试问题：请核对本人动作是否有原文支持"}]}
             else:
                 output = {"verdict": "pass", "issues": [], "strengths": ["本地协议测试，非真实模型评价"]}
+        elif "结构化样例" in context["evidence"][0]["text"]:
+            output = {"sections": [
+                {"id": "old-project", "kind": "project", "title": "早期查询项目", "start_date": "2023-01", "end_date": "2023-06", "fact_ids": ["e1"],
+                 "items": [{"id": "old-item", "text": "使用 Python 完成查询接口，保留测试记录。", "highlights": ["查询接口"], "fact_ids": ["e1"]}]},
+                {"id": "new-project", "kind": "project", "title": "近期检索项目", "start_date": "2025-01", "end_date": "2025-06", "fact_ids": ["e1"],
+                 "items": [{"id": "new-item", "text": "使用 Python 完成检索实验，交付评估脚本。", "highlights": ["评估脚本"], "fact_ids": ["e1"]}]},
+            ]}
         else:
             output = {"sections": [{"id": "projects", "title": "项目经历", "items": [
                 {"id": "item1", "text": context["evidence"][0]["text"], "fact_ids": ["e1"]},

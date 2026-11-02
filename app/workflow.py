@@ -5,12 +5,19 @@ from contextlib import suppress
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.generation_models import Draft, Evidence, Plan, Review, ReviewDraft
+from app.generation_models import (
+    Draft,
+    DraftEducation,
+    Evidence,
+    Plan,
+    Review,
+    ReviewDraft,
+)
 from app.generation_service import GenerationService
 from app.model_client import ModelOutputError
 from app.models import resume_hash
 from app.providers import ProviderError
-from app.skill import validate_draft
+from app.skill import validate_draft, validate_quality
 from app.store import Conflict
 
 
@@ -78,6 +85,7 @@ class Workflow(GenerationService):
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
                                     "jd": job["input"]["jd"], "role": job["skill"]["role"]},
                    "evidence": job["evidence"], "answer_context": job.get("answer_context", [])}
+        context["fixed_education"] = job["input"].get("education", [])
         if stage == "plan":
             context["question_budget"] = 3 if job["input"]["allow_questions"] and not job["answered"] else 0
         if stage in ("draft", "revise"):
@@ -118,7 +126,7 @@ class Workflow(GenerationService):
             if isinstance(value.value, Review):
                 candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
                 allowed = {"document", *[c.id for c in candidate_type.model_validate(job["draft"]).claims()],
-                           *[s["id"] for s in job["draft"]["sections"]]}
+                           *[s["id"] for s in job["draft"]["sections"]], *[e["id"] for e in job["draft"].get("education", [])]}
                 if any(i.item_id not in allowed for i in value.value.issues):
                     raise ModelOutputError("审阅问题没有定位到本次正文")
         except asyncio.CancelledError:
@@ -217,15 +225,23 @@ class Workflow(GenerationService):
                         return True
                 elif stage in ("draft", "revise"):
                     def draft_done(current, _, draft=output, completed_stage=stage):
+                        if current["input"].get("education"):
+                            fixed = [DraftEducation(**row, fact_ids=[e["id"] for e in current["evidence"]
+                                     if e["id"].startswith(f"profile-{row['id']}-")])
+                                     for row in current["input"]["education"]]
+                            draft = Draft.model_validate({**draft.model_dump(), "education": [row.model_dump() for row in fixed]})
                         current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
                         if completed_stage == "revise":
                             current["revisions"] += 1
 
                     self._change(job["id"], token, draft_done)
                 else:
-                    job = self._change(job["id"], token, lambda j, _, review=output: j.update(review=review.model_dump(),
-                                                                                           issues=[i.model_dump() for i in review.issues]))
-                    if output.verdict == "pass" or not self._can_revise(job):
+                    candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+                    quality = validate_quality(candidate_type.model_validate(job["draft"]))
+                    job = self._change(job["id"], token, lambda j, _, review=output, quality=quality: j.update(review=review.model_dump(),
+                                                                                           issues=[i.model_dump() for i in [*review.issues, *quality]]))
+                    editorial_fix = any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
+                    if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
                         self._finish(job, token)
                         return True
                     self._change(job["id"], token, lambda j, _: j.update(stage="revise"))

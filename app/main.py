@@ -121,7 +121,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         items = [Item(id=f"material-{i // 4000}", text=text[i:i + 4000])
                  for i in range(0, len(text), 4000) if text[i:i + 4000].strip()]
         sections = [Section(id="experience", title="经历与实践", items=items)] if items else []
-        content = ResumeContent(name=body.name, target_role=body.target_role, contact=body.contact, sections=sections)
+        content = ResumeContent(name=body.name, target_role=body.target_role, contact=body.contact, education=body.education, sections=sections)
         return store.create(content, "manual", text)
 
     @app.post("/api/demo", status_code=201)

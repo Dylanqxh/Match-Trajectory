@@ -2,7 +2,13 @@ from typing import ClassVar, Literal
 
 from pydantic import Field, model_validator
 
-from app.models import Item, ResumeContent, Section, StrictModel
+from app.models import Education, Highlighted, Item, ResumeContent, Section, StrictModel
+from app.resume_layout import (
+    education_text,
+    ordered_sections,
+    period_text,
+    section_text,
+)
 
 
 class Evidence(StrictModel):
@@ -33,7 +39,7 @@ class Plan(StrictModel):
         return self
 
 
-class Claim(StrictModel):
+class Claim(Highlighted):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
     text: str = Field(min_length=1, max_length=2000)
     fact_ids: list[str] = Field(min_length=1, max_length=100)
@@ -43,15 +49,19 @@ class SummaryClaim(Claim):
     id: Literal["__summary"]
 
 
-class DraftSection(StrictModel):
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
-    title: str = Field(min_length=1, max_length=60)
+class DraftEducation(Education):
+    fact_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DraftSection(Section):
+    fact_ids: list[str] = Field(default_factory=list, max_length=100)
     items: list[Claim] = Field(min_length=1, max_length=15)
 
 
 class Draft(StrictModel):
     body_limit: ClassVar[int] = 14000
     summary: SummaryClaim | None = None
+    education: list[DraftEducation] = Field(default_factory=list, max_length=8)
     sections: list[DraftSection] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
@@ -59,6 +69,9 @@ class Draft(StrictModel):
         ids = [s.id for s in self.sections]
         claims = self.claims()
         if len(set(ids)) != len(ids) or len({c.id for c in claims}) != len(claims):
+            raise ValueError("段落标识重复")
+        education_ids = [e.id for e in self.education]
+        if len(set(education_ids)) != len(education_ids) or set(education_ids) & {*ids, *[c.id for c in claims], "__summary"}:
             raise ValueError("段落标识重复")
         if self.summary and self.summary.id != "__summary":
             raise ValueError("简介标识必须为 __summary")
@@ -69,10 +82,18 @@ class Draft(StrictModel):
     def claims(self) -> list[Claim]:
         return ([self.summary] if self.summary else []) + [c for s in self.sections for c in s.items]
 
-    def to_content(self, name: str, contact: str, target_role: str) -> ResumeContent:
+    def metadata_claims(self, refs) -> list[Claim]:
+        return [Claim(id=e.id, text=" ".join(filter(None, (education_text(e), period_text(e)))), fact_ids=e.fact_ids)
+                for e in self.education if education_text(e) or period_text(e)] + [
+            Claim(id=s.id, text=" ".join(filter(None, (section_text(s), period_text(s)))),
+                  fact_ids=s.fact_ids or list(dict.fromkeys(ref for i in s.items for ref in i.fact_ids)) or refs)
+            for s in self.sections]
+
+    def to_content(self, name: str, contact: str, target_role: str, education=None) -> ResumeContent:
         return ResumeContent(name=name, contact=contact, target_role=target_role,
+                             education=education if education is not None else [Education.model_validate(e.model_dump(exclude={"fact_ids"})) for e in self.education],
                              summary=self.summary.text if self.summary else "",
-                             sections=[Section(id=s.id, title=s.title, items=[Item(id=c.id, text=c.text) for c in s.items]) for s in self.sections])
+                             sections=[Section(**s.model_dump(exclude={"fact_ids", "items"}), items=[Item(id=c.id, text=c.text, highlights=c.highlights) for c in s.items]) for s in ordered_sections(self.sections)])
 
 
 class ReviewClaim(Claim):
@@ -125,6 +146,7 @@ class GenerationInput(StrictModel):
     jd: str = Field(default="", max_length=8000)
     allow_questions: bool = True
     send_materials: bool = False
+    education: list[Education] = Field(default_factory=list, max_length=8)
 
 
 class AnswerInput(StrictModel):

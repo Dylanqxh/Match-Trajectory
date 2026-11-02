@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 
 from app.models import AIInfo, Fact, ResumeContent, ResumeRecord
+from app.resume_layout import education_text, period_text, section_text
 
 
 class Conflict(Exception):
@@ -66,6 +67,8 @@ def timestamp() -> str:
 def make_facts(content: ResumeContent, origin: str, previous: list[Fact]) -> list[Fact]:
     existing = {(fact.block_id, fact.text): fact.id for fact in previous}
     blocks = [(item.id, item.text) for section in content.sections for item in section.items]
+    blocks += [(e.id, education_text(e) + " " + period_text(e)) for e in content.education]
+    blocks += [(s.id, section_text(s) + " " + period_text(s)) for s in content.sections]
     if content.summary:
         blocks.append(("__summary", content.summary))
     return [Fact(id=existing.get((block, text), uuid.uuid4().hex), block_id=block, text=text,
@@ -75,7 +78,8 @@ def make_facts(content: ResumeContent, origin: str, previous: list[Fact]) -> lis
 
 def resolve_deleted_issues(current: ResumeRecord, content: ResumeContent, revision: int) -> list[dict]:
     def blocks(value):
-        return {**{s.id: s.title for s in value.sections},
+        return {**{s.id: section_text(s) + " " + period_text(s) for s in value.sections},
+                **{e.id: education_text(e) + " " + period_text(e) for e in value.education},
                 **{i.id: i.text for s in value.sections for i in s.items},
                 **({"__summary": value.summary} if value.summary else {})}
 

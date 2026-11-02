@@ -10,7 +10,7 @@ from app.providers import ProviderConfig, ProviderError
 
 REQUEST_TIMEOUT = 45
 MAX_RESPONSE_BYTES = 262144
-OUTPUT_CONTRACT_VERSION = "2026-11-02.2"
+OUTPUT_CONTRACT_VERSION = "2026-11-02.3"
 
 
 class ModelOutputError(ProviderError):
@@ -29,7 +29,8 @@ def format_examples(stage, context):
         return [{"decision": "draft", "selected_fact_ids": [ref], "focus": [], "questions": [], "gaps": []},
                 {"decision": "ask", "selected_fact_ids": [ref], "questions": [{"id": "q1", "text": "你本人已经交付了什么？"}], "focus": [], "gaps": []}]
     if stage in ("draft", "revise"):
-        return [{"summary": None, "sections": [{"id": "section_1", "title": "项目经历", "items": [
+        return [{"summary": None, "education": [], "sections": [{"id": "section_1", "title": "<原文项目的名称或任务用途>",
+            "kind": "project", "start_date": "", "end_date": "", "organization": "", "role": "", "fact_ids": [ref], "items": [
             {"id": "section_1_item_1", "text": "<仅根据原文表达；此处是格式占位符，不得复制>", "fact_ids": [ref]},
         ]}]}]
     return [{"verdict": "pass", "issues": [], "strengths": []},

@@ -2,6 +2,7 @@
 from app.generation_models import (
     AnswerInput,
     Draft,
+    DraftEducation,
     GenerationInput,
     ReviewClaim,
     ReviewDraft,
@@ -10,7 +11,8 @@ from app.generation_models import (
 )
 from app.jobs import JobStore, fingerprint
 from app.model_client import OUTPUT_CONTRACT_VERSION, ModelRegistry
-from app.models import AIInfo, ResumeContent, resume_hash
+from app.models import AIInfo, Education, ResumeContent, resume_hash
+from app.resume_layout import education_text, period_text
 from app.skill import build_evidence, load_skill, validate_draft
 from app.store import Conflict, ResumeStore
 
@@ -18,12 +20,14 @@ from app.store import Conflict, ResumeStore
 def content_draft(content, evidence, source_map) -> ReviewDraft:
     refs = [e["id"] for e in evidence]
 
-    def claim(item_id, text):
+    def claim(item_id, text, highlights=None):
         model = ReviewSummaryClaim if item_id == "__summary" else ReviewClaim
-        return model(id=item_id, text=text, fact_ids=source_map.get(item_id) or refs)
+        return model(id=item_id, text=text, highlights=highlights or [], fact_ids=source_map.get(item_id) or refs)
 
     return ReviewDraft(summary=claim("__summary", content.summary) if content.summary else None,
-                       sections=[ReviewSection(id=s.id, title=s.title, items=[claim(i.id, i.text) for i in s.items])
+                       education=[DraftEducation(**e.model_dump(), fact_ids=source_map.get(e.id) or refs) for e in content.education],
+                       sections=[ReviewSection(**s.model_dump(exclude={"items"}), fact_ids=source_map.get(s.id) or refs,
+                                               items=[claim(i.id, i.text, i.highlights) for i in s.items])
                                  for s in content.sections])
 
 
@@ -37,12 +41,19 @@ class GenerationService:
     def submit(self, inputs: GenerationInput):
         if inputs.source_text and not inputs.send_materials:
             raise ValueError("请先确认将材料发送给所选模型服务")
+        if inputs.source_text and (not inputs.name or not inputs.contact):
+            raise ValueError("请先填写姓名、联系方式和目标岗位；也可以使用化名及求职专用邮箱")
         config = self.registry.get(self.registry.current) if inputs.source_text else None
         skill = load_skill(inputs.target_role)
         extra = None if inputs.source_text else {"state": "ready", "framework": True,
                                                 "error": "当前只有目标，没有个人材料。请补充课程、实践、作品或工作片段后重新生成。"}
+        evidence = [e.model_dump() for e in build_evidence(inputs.source_text)]
+        for row in inputs.education:
+            text = " ".join(filter(None, (education_text(row), period_text(row))))
+            if text:
+                evidence.extend(e.model_dump() for e in build_evidence(text, prefix=f"profile-{row.id}-"))
         job = self.jobs.create(inputs.model_dump(), self.registry.current or "", self.registry.describe(config) if config else {},
-                               skill, [e.model_dump() for e in build_evidence(inputs.source_text)], extra=extra)
+                               skill, evidence, extra=extra)
         self.wake()
         return job
 
@@ -127,13 +138,14 @@ class GenerationService:
                 return
             inputs = job["input"]
             draft = Draft.model_validate(job["draft"]) if job["draft"] else None
-            content = draft.to_content(inputs["name"], inputs["contact"], inputs["target_role"]) if draft else ResumeContent(
-                name=inputs["name"], contact=inputs["contact"], target_role=inputs["target_role"])
+            fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
+            content = draft.to_content(inputs["name"], inputs["contact"], inputs["target_role"], fixed or None) if draft else ResumeContent(
+                name=inputs["name"], contact=inputs["contact"], target_role=inputs["target_role"], education=fixed)
             status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
                 i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
             info = AIInfo(job_id=job_id, review_job_id=job_id, review_status=status, content_hash=resume_hash(content),
                           skill_version=job["skill"]["version"], issues=job["issues"],
-                          source_map={c.id: c.fact_ids for c in draft.claims()} if draft else {})
+                          source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
             record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
             job["adopted_resume_id"] = record.id
             result.append(record)

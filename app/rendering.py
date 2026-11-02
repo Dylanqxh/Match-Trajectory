@@ -7,6 +7,15 @@ from io import BytesIO
 from pathlib import Path
 
 from app.models import ResumeContent
+from app.resume_layout import (
+    KIND_LABELS,
+    date_key,
+    education_text,
+    ordered_sections,
+    period_text,
+    section_text,
+    text_runs,
+)
 
 
 def font_path() -> Path:
@@ -16,7 +25,9 @@ def font_path() -> Path:
 
 def expected_texts(content: ResumeContent) -> list[str]:
     return [value for value in [content.name, content.target_role, content.contact, content.summary,
-            *[value for section in content.sections for value in [section.title, *[item.text for item in section.items]]]] if value]
+            *[value for row in content.education for value in (row.school, row.degree, row.major, row.start_date, row.end_date)],
+            *[value for section in content.sections for value in [section.title, section.organization, section.role,
+               section.start_date, section.end_date, *[item.text for item in section.items]]]] if value]
 
 
 def marker(demo: bool, draft: bool) -> str:
@@ -26,28 +37,41 @@ def marker(demo: bool, draft: bool) -> str:
 def render_html(content: ResumeContent, demo: bool = False, draft: bool = False, font_uri: str = "/api/font") -> str:
     esc = html.escape
     notice = marker(demo, draft)
-    sections = "".join(f'<section><h2>{esc(section.title)}</h2><ul>' +
-                       "".join(f'<li>{esc(item.text)}</li>' for item in section.items) + "</ul></section>"
-                       for section in content.sections)
+    def rich(item):
+        return "".join(f"<strong>{esc(text)}</strong>" if bold else esc(text) for text, bold in text_runs(item.text, item.highlights))
+
+    education = ('<section><h2>教育经历</h2>' + "".join(
+        f'<div class="experience-heading"><strong>{esc(education_text(row))}</strong><span>{esc(period_text(row))}</span></div>'
+        for row in sorted(content.education, key=date_key, reverse=True)) + '</section>') if content.education else ''
+    blocks, previous_kind = [], None
+    for section in ordered_sections(content.sections):
+        heading = f'<h2>{esc(KIND_LABELS.get(section.kind) or section.title)}</h2>' if section.kind == "other" or section.kind != previous_kind else ''
+        metadata = (f'<div class="experience-heading"><strong>{esc(section_text(section))}</strong><span>{esc(period_text(section))}</span></div>'
+                    if section.kind in ("project", "work", "research") or section.organization or section.role or period_text(section) else '')
+        blocks.append('<section>' + heading + metadata + '<ul>' + ''.join(f'<li>{rich(item)}</li>' for item in section.items) + '</ul></section>')
+        previous_kind = section.kind
+    sections = ''.join(blocks)
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 @font-face{{font-family:ResumeCJK;src:url("{esc(font_uri, quote=True)}")}}*{{box-sizing:border-box}}
 @page{{size:A4;margin:16mm}}html,body{{margin:0;background:white;color:#17232d}}
-body{{font-family:ResumeCJK,"Microsoft YaHei",sans-serif;font-size:10.5pt;line-height:1.65}}
+body{{font-family:ResumeCJK,"Microsoft YaHei",sans-serif;font-size:10.5pt;line-height:1.5}}
 .sheet{{width:210mm;min-height:297mm;padding:16mm;margin:auto}}h1{{font-size:23pt;margin:0 0 2mm;line-height:1.3}}
 .role{{font-size:12pt;color:#1e6157;margin-bottom:2mm}}.contact{{font-size:9pt;color:#56626a;white-space:pre-wrap}}
 .summary{{margin-top:4mm;white-space:pre-wrap}}h2{{font-size:11.5pt;border-bottom:1px solid #aebeb9;padding-bottom:1.5mm;margin:5mm 0 2mm}}
+.experience-heading{{display:flex;justify-content:space-between;gap:4mm;margin:1mm 0 2mm;break-after:avoid}}.experience-heading span{{white-space:nowrap;font-size:9pt;color:#56626a}}strong{{font-weight:700}}
 ul{{margin:0;padding-left:4.5mm}}li{{margin-bottom:2mm;white-space:pre-wrap;overflow-wrap:anywhere}}
 .notice{{font-size:9pt;color:#8b5121;border:1px solid #d6b788;padding:2mm;margin-bottom:4mm}}
-section{{break-inside:auto}}h2{{break-after:avoid}}li{{break-inside:avoid}}
+section{{break-inside:auto;margin-top:2mm}}h2{{break-after:avoid}}li{{break-inside:avoid}}
 @media print{{.sheet{{width:auto;min-height:0;padding:0;margin:0}}}}
 </style></head><body><main class="sheet">
 {f'<div class="notice">{esc(notice)}</div>' if notice else ''}<h1>{esc(content.name or '姓名待填写')}</h1>
 <div class="role">{esc(content.target_role)}</div><div class="contact">{esc(content.contact)}</div>
-{f'<div class="summary">{esc(content.summary)}</div>' if content.summary else ''}{sections}</main></body></html>'''
+{education}{f'<div class="summary">{esc(content.summary)}</div>' if content.summary else ''}{sections}</main></body></html>'''
 
 
 def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
     from docx import Document
+    from docx.enum.text import WD_TAB_ALIGNMENT
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Mm, Pt
@@ -70,16 +94,40 @@ def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
     heading = doc.add_paragraph()
     run = heading.add_run(content.name or "姓名待填写")
     run.bold, run.font.size = True, Pt(22)
-    for text in (content.target_role, content.contact, content.summary):
+    for text in (content.target_role, content.contact):
         if text:
             doc.add_paragraph(text)
-    for block in content.sections:
+    def heading(text):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.keep_with_next = True
-        title = paragraph.add_run(block.title)
+        title = paragraph.add_run(text)
         title.bold, title.font.size = True, Pt(12)
+
+    def dated_heading(text, dates):
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.keep_with_next = True
+        paragraph.paragraph_format.tab_stops.add_tab_stop(Mm(178), WD_TAB_ALIGNMENT.RIGHT)
+        paragraph.add_run(text).bold = True
+        if dates:
+            paragraph.add_run("\t" + dates)
+
+    if content.education:
+        heading("教育经历")
+        for row in sorted(content.education, key=date_key, reverse=True):
+            dated_heading(education_text(row), period_text(row))
+    if content.summary:
+        doc.add_paragraph(content.summary)
+    previous_kind = None
+    for block in ordered_sections(content.sections):
+        if block.kind == "other" or block.kind != previous_kind:
+            heading(KIND_LABELS.get(block.kind) or block.title)
+        previous_kind = block.kind
+        if block.kind in ("project", "work", "research") or block.organization or block.role or period_text(block):
+            dated_heading(section_text(block), period_text(block))
         for item in block.items:
-            doc.add_paragraph(item.text)
+            paragraph = doc.add_paragraph(style="List Bullet")
+            for text, bold in text_runs(item.text, item.highlights):
+                paragraph.add_run(text).bold = bold
     doc.core_properties.comments = "手工核对版本，未经 AI 审阅。" + marker(demo, draft)
     result = BytesIO()
     doc.save(result)

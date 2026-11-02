@@ -1,10 +1,12 @@
-export interface Item { id: string; text: string }
-export interface Section { id: string; title: string; items: Item[] }
-export interface Content { name: string; target_role: string; contact: string; summary: string; sections: Section[] }
+export interface Period { start_date?: string; end_date?: string }
+export interface Education extends Period { id: string; school: string; degree: string; major: string }
+export interface Item { id: string; text: string; highlights?: string[] }
+export interface Section extends Period { id: string; title: string; kind?: string; organization?: string; role?: string; items: Item[] }
+export interface Content { name: string; target_role: string; contact: string; summary: string; education: Education[]; sections: Section[] }
 export interface AIInfo { job_id: string; review_job_id: string; review_status: "passed" | "blocked" | "unreviewed"; manual_takeover: boolean; issues: GenerationIssue[] }
 export interface Resume { id: string; revision: number; confirmed_revision: number | null; origin: "manual" | "demo" | "ai"; content: Content; updated_at: string; ai: AIInfo | null }
 export interface Summary { id: string; revision: number; origin: string; name: string; target_role: string }
-export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", sections: [] };
+export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", education: [], sections: [] };
 export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string; resolution?: { action: string; revision: number; explanation?: string; evidence_ids?: string[] } }
 export function unresolvedBlocking(issue: GenerationIssue): boolean {
   return issue.severity === "blocking" && !["deleted", "source_reviewed"].includes(issue.resolution?.action || "");
@@ -16,7 +18,7 @@ export interface GenerationJob extends GenerationSummary {
   service_warning?: string;
   input: { target_role: string }; calls: number; revisions: number; error: string; framework: boolean; question_group: string;
   plan: { questions: { id: string; text: string }[]; gaps: string[] } | null;
-  draft: { summary: { text: string } | null; sections: { id: string; title: string; items: { id: string; text: string; fact_ids: string[] }[] }[] } | null;
+  draft: { summary: { text: string } | null; education?: Education[]; sections: Section[] } | null;
   evidence: { id: string; text: string }[]; issues: GenerationIssue[]; review: { verdict: string } | null;
 }
 
@@ -24,7 +26,10 @@ export async function request(path: string, options: RequestInit = {}): Promise<
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...options.headers } });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(typeof error.detail === "string" ? error.detail : `请求失败（${response.status}）`);
+    const labels: Record<string, string> = { education: "教育经历", sections: "经历", items: "条目", name: "姓名", contact: "联系方式", school: "学校", degree: "学历", major: "专业", start_date: "开始时间", end_date: "结束时间", highlights: "重点短语", text: "正文" };
+    const fields = Array.isArray(error.detail) ? error.detail.slice(0, 3).map((e: { loc?: (string | number)[] }) =>
+      (e.loc || []).slice(1).map(k => typeof k === "number" ? `第${k + 1}项` : labels[k] || "输入").join("／")).join("、") : "";
+    throw new Error(typeof error.detail === "string" ? error.detail : fields ? `请检查${fields}：日期用 YYYY 或 YYYY-MM；重点须为正文短语，最多2处且不过量。` : `请求失败（${response.status}）`);
   }
   return response;
 }
@@ -33,6 +38,6 @@ export async function api<T>(path: string, body?: unknown, method = "POST"): Pro
   return response.json();
 }
 export function clean(content: Content): Content {
-  return { ...content, sections: content.sections.map(section => ({ ...section,
+  return { ...content, education: (content.education || []).filter(e => e.school.trim() || e.degree.trim() || e.major.trim()), sections: content.sections.map(section => ({ ...section,
     title: section.title.trim() || "经历与实践", items: section.items.filter(item => item.text.trim()) })) };
 }

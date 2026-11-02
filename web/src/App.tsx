@@ -3,8 +3,10 @@ import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, re
 import { ModelSettings } from "./ModelSettings";
 import { GenerationPanel } from "./GenerationPanel";
 import { ManualReview } from "./ManualReview";
+import { EducationFields } from "./EducationFields";
+import { ExperienceFields } from "./ExperienceFields";
 
-const roles = ["后端研发", "算法", "数据分析", "产品经理", "内容／用户运营"];
+const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
 export default function App() {
   const [list, setList] = useState<Summary[]>([]);
@@ -29,8 +31,9 @@ export default function App() {
   const [preview, setPreview] = useState("");
   const [scale, setScale] = useState(0.8);
   const previewBox = useRef<HTMLDivElement>(null);
-  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, source, jd });
-  const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim()) && formKey !== savedInput.current);
+  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd });
+  const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim()
+    || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
 
   function adopt(row: Resume) {
     setRecord(row); setContent(row.content); setDirty(false); setError("");
@@ -96,10 +99,10 @@ export default function App() {
   }
   async function generate() {
     await action(async () => {
-      if (!content.target_role.trim()) throw new Error("请先填写想投递的目标岗位");
+      if (!content.name.trim() || !content.contact.trim() || !content.target_role.trim()) throw new Error("请先填写姓名、联系方式和目标岗位");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
       const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
-        source_text: source, jd, allow_questions: allowQuestions, send_materials: sendMaterials };
+        education: clean(content).education, source_text: source, jd, allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
       if (generationRequest.current?.key !== key) generationRequest.current = { key, id: crypto.randomUUID() };
       const job = await api<GenerationJob>("/api/generation-jobs", { ...payload, request_id: generationRequest.current.id });
@@ -152,12 +155,6 @@ export default function App() {
       setStatus(`${format.toUpperCase()} 已导出 · 版本 ${row.revision}`);
     });
   }
-  function editItem(sectionId: string, itemId: string, text: string) {
-    edit({ ...content, sections: content.sections.map(section => section.id !== sectionId ? section : {
-      ...section, items: section.items.map(item => item.id === itemId ? { ...item, text } : item),
-    }) });
-  }
-
   return <div className="app-shell">
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
@@ -191,18 +188,20 @@ export default function App() {
           <p className="fine">不用准备完整档案，也不用提供 JD。材料少时可以先生成草稿，缺少的经历不会凭空补造。</p>
         </div>
         <form className="material-card" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={busy}>
-          <h3>开始整理你的简历</h3><label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="如何称呼你"/></label>
-          <label>目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如 Java 后端、算法、产品经理"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
-          <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="邮箱或手机号，可稍后补充"/></label>
+          <h3>开始整理你的简历</h3><label>姓名<input required value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="如何称呼你"/></label>
+          <label>目标岗位<input required list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如 Java 后端、算法、产品经理"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+          <label>联系方式<input required value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="必填：手机号或邮箱，可用求职专用联系方式"/></label>
+          <p className="fine">姓名、联系方式和目标岗位必填；学校与经历时间按事实填写，未知留空。</p>
+          <EducationFields rows={content.education || []} onChange={education => setContent({ ...content, education })}/>
           <label>现有材料<textarea aria-label="现有材料" rows={7} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="课程、项目、工作、作品或活动都可以。写自己做了什么、用什么方法、有何交付或验证；不完整也可以。"/></label>
           <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
           <details><summary>有具体岗位 JD？可选填写</summary><label>岗位 JD<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)}/></label></details>
           <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
           <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
-          <p className="fine">姓名和联系方式单独留在本机；若你在材料正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
+          <p className="fine">姓名和联系方式单独留在本机；教育信息会作为材料发送。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
           <button className="primary full" type="submit">AI 生成简历</button>
           <button className="text-button full" type="button" onClick={() => void action(async () => {
-            adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, source_text: source })); await refreshList();
+            adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
           })}>进入编辑器 →</button>
         </fieldset></form>
       </section> : <>
@@ -215,14 +214,9 @@ export default function App() {
           <label>目标岗位<input value={content.target_role} maxLength={80} onChange={e => edit({ ...content, target_role: e.target.value })}/></label></div>
           <label>联系方式<input value={content.contact} maxLength={300} onChange={e => edit({ ...content, contact: e.target.value })}/></label>
           <label>个人简介（可留空）<textarea rows={3} value={content.summary} maxLength={2000} onChange={e => edit({ ...content, summary: e.target.value })}/></label>
-          {content.sections.map(section => <div className="section-card" key={section.id}>
-            <div className="section-heading"><input aria-label="板块名称" value={section.title} maxLength={60} onChange={e => edit({ ...content, sections: content.sections.map(s => s.id === section.id ? { ...s, title: e.target.value } : s) })}/>
-              <button className="text-button" onClick={() => edit({ ...content, sections: content.sections.filter(s => s.id !== section.id) })} aria-label={`删除${section.title}板块`}>删除板块</button></div>
-            {section.items.map((item, index) => <div className="item-row" key={item.id}><textarea aria-label={`${section.title}第${index + 1}条`} rows={3} value={item.text} maxLength={4000} onChange={e => editItem(section.id, item.id, e.target.value)}/>
-              <button className="remove-item" aria-label={`删除第${index + 1}条`} onClick={() => edit({ ...content, sections: content.sections.map(s => s.id === section.id ? { ...s, items: s.items.filter(i => i.id !== item.id) } : s) })}>×</button></div>)}
-            <button className="text-button" onClick={() => edit({ ...content, sections: content.sections.map(s => s.id === section.id ? { ...s, items: [...s.items, { id: crypto.randomUUID(), text: "" }] } : s) })}>＋ 添加一条</button>
-          </div>)}
-          <button className="secondary full" onClick={() => edit({ ...content, sections: [...content.sections, { id: crypto.randomUUID(), title: "新增经历", items: [] }] })}>＋ 添加板块</button>
+          <EducationFields rows={content.education || []} onChange={education => edit({ ...content, education })}/>
+          {!content.education?.length && <p className="notice">尚未填写固定教育信息；如正文已有教育段落，请确认后移入此处，避免重复。</p>}
+          <ExperienceFields sections={content.sections} onChange={sections => edit({ ...content, sections })}/>
           </fieldset>
           <div className="save-bar"><button className="primary" disabled={busy || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>
             <button className="text-button" disabled={busy} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>

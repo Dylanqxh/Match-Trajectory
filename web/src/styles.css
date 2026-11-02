@@ -27,3 +27,5 @@
 .manual-evidence > input { width: auto !important; margin-top: 5px; flex-shrink: 0; }
 .manual-evidence > span { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
 .manual-evidence > span > span, .manual-evidence strong { display: block; }
+
+.education-fields{margin:16px 0;padding:12px 0;border-top:1px solid #dce4e0}.bullet-editor{margin-bottom:16px}.bullet-editor .field-help{margin-top:4px}.bullet-editor label.fine input{font-size:12px}

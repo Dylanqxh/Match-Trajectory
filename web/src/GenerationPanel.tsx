@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, GenerationJob, Resume } from "./api";
+import { ResumeText } from "./ResumeText";
 
 const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达" };
 const states: Record<string, string> = { queued: "等待执行", running: "正在处理", waiting_input: "补充一点信息", ready: "候选已保存", failed: "本次处理未完成", interrupted: "任务已中断", cancelled: "已取消" };
@@ -56,8 +57,9 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
           <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，直接生成</button></div></div>}
       {job.draft && <div className="candidate-content">
         <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "AI 审阅通过；仍需你核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
+        {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[row.start_date, row.end_date].filter(Boolean).join(" — ")}</p>)}
         {job.draft.summary && <p>{job.draft.summary.text}</p>}
-        {job.draft.sections.map(section => <section key={section.id}><h3>{section.title}</h3><ul>{section.items.map(item => <li key={item.id}>{item.text}</li>)}</ul></section>)}
+        {job.draft.sections.map(section => <section key={section.id}><h3>{section.title}</h3><p className="fine">{[section.organization, section.role, [section.start_date, section.end_date].filter(Boolean).join(" — ")].filter(Boolean).join(" · ")}</p><ul>{section.items.map(item => <li key={item.id}><ResumeText text={item.text} highlights={item.highlights}/></li>)}</ul></section>)}
       </div>}
       {job.issues.length > 0 && <div className="generation-issues"><h3>需要核对的地方</h3>{job.issues.map((issue, index) => <p key={index}>
         <strong>{issue.severity === "blocking" ? "需修正" : "建议"}：</strong>{issue.message}{issue.suggestion && <small>{issue.suggestion}</small>}</p>)}</div>}

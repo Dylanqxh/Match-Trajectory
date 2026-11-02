@@ -23,8 +23,8 @@ export function ManualReview({ record, issueIndex, onClose, onSaved }: {
     return () => { active = false; previousFocus?.focus(); };
   }, [record.id, record.ai?.job_id]);
   const texts = [...record.content.sections.flatMap(section => [
-    { id: section.id, text: section.title }, ...section.items,
-  ]), { id: "__summary", text: record.content.summary }];
+    { id: section.id, text: [section.title, section.organization, section.role, section.start_date, section.end_date].filter(Boolean).join(" · ") }, ...section.items,
+  ]), ...(record.content.education || []).map(e => ({ id: e.id, text: [e.school, e.degree, e.major, e.start_date, e.end_date].filter(Boolean).join(" · ") })), { id: "__summary", text: record.content.summary }];
   const currentText = issue.item_id === "document" ? "本次问题针对整体内容，请核对相关原文。" : texts.find(item => item.id === issue.item_id)?.text;
   async function save() {
     setBusy(true); setError("");

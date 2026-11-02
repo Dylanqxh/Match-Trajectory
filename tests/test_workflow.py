@@ -439,7 +439,8 @@ def test_legitimate_empty_heading_is_sent_to_reviewer_without_omission(tmp_path)
     store.save(record.id, 1, content)
     runner.recheck(record.id, 2, "empty-heading-full")
     asyncio.run(runner.run_one())
-    assert model.calls[-1][1]["candidate"]["sections"][-1] == {"id": "empty", "title": "教育背景", "items": []}
+    heading = model.calls[-1][1]["candidate"]["sections"][-1]
+    assert {key: heading[key] for key in ("id", "title", "items")} == {"id": "empty", "title": "教育背景", "items": []}
 
 
 def test_structural_retry_receives_safe_feedback_and_persists_reason(tmp_path):
@@ -545,3 +546,49 @@ def test_manual_resolution_accepts_program_reports_larger_than_model_issue_limit
         runner.takeover(record.id, record.revision)
     with pytest.raises(Conflict, match="问题不存在"):
         runner.resolve_issue(record.id, manual_resolution(record, issue_index=41))
+
+
+def test_fixed_education_is_used_verbatim_instead_of_model_rewriting(tmp_path):
+    from app.models import Education
+
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
+    fixed = Education(id="edu1", school="虚构测试学院", major="计算机", degree="硕士", start_date="2024-09", end_date="至今")
+    job = runner.submit(request(education=[fixed]))
+    asyncio.run(runner.run_one())
+    adopted = runner.adopt(job["id"])
+    assert adopted.content.education == [fixed]
+    assert jobs.get(job["id"])["draft"]["education"][0]["school"] == fixed.school
+    assert "profile-edu1-1" in adopted.ai.source_map["edu1"]
+    assert "me@example.com" not in json.dumps(model.calls, ensure_ascii=False)
+
+
+def test_long_draft_triggers_bounded_editorial_revision_even_if_model_review_passes(tmp_path):
+    long_draft = json.loads(json.dumps(DRAFT))
+    long_draft["sections"][0]["items"][0]["text"] = "使用 Java 完成课程预约查询接口，并编写测试记录。" * 7
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, long_draft, PASS, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "ready"
+    assert [call[0] for call in model.calls] == ["plan", "draft", "review", "revise", "review"]
+    assert any(i["code"] == "quality" for i in model.calls[3][1]["issues_to_fix"])
+
+
+def test_generation_requires_basic_identity_before_paid_calls(tmp_path):
+    runner, _, _, _, model = setup(tmp_path, [])
+    payload = request().model_copy(update={"name": "", "contact": ""})
+    with pytest.raises(ValueError, match="姓名"):
+        runner.submit(payload)
+    assert model.calls == []
+
+
+def test_reviewer_can_report_education_issues_without_structure_retry(tmp_path):
+    from app.models import Education
+
+    warning = {"verdict": "pass", "issues": [{"item_id": "edu1", "severity": "warning", "code": "quality", "message": "教育时间需要用户补充"}]}
+    runner, jobs, _, _, _ = setup(tmp_path, [PLAN, DRAFT, warning])
+    job = runner.submit(request(education=[Education(id="edu1", school="虚构学校", degree="本科")]))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "ready"
+    assert finished["calls"] == 3
+    assert finished["issues"][0]["item_id"] == "edu1"

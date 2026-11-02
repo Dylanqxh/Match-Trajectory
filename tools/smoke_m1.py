@@ -111,6 +111,8 @@ def run(output, executable=None):
                         pdf_page.render(scale=1.2).to_pil().save(output / "pdf-page.png")
                 assert material in "\n".join(p.text for p in Document(output / "resume.docx").paragraphs)
                 page.get_by_role("button", name="＋ 新建简历").click()
+                page.get_by_label("姓名", exact=True).fill("补问测试用户")
+                page.get_by_label("联系方式", exact=True).fill("questions@example.com")
                 page.get_by_label("目标岗位", exact=True).fill("产品经理")
                 page.locator("form textarea").first.fill("补问场景：参与校园预约流程讨论，尚未说明个人交付。")
                 page.get_by_label("确认将材料和可选 JD 发送给所选模型服务").check()
@@ -141,6 +143,46 @@ def run(output, executable=None):
                     page.get_by_role("button", name="确认并导出 Word", exact=True).click()
                 download.value.save_as(output / "manual-reviewed.docx")
                 assert manual_material in "\n".join(p.text for p in Document(output / "manual-reviewed.docx").paragraphs)
+                page.get_by_role("button", name="＋ 新建简历").click()
+                assert page.get_by_label("姓名", exact=True).evaluate("e => e.required")
+                assert page.get_by_label("联系方式", exact=True).evaluate("e => e.required")
+                page.get_by_label("姓名", exact=True).fill("结构测试用户")
+                page.get_by_label("联系方式", exact=True).fill("structure@example.com")
+                page.get_by_label("目标岗位", exact=True).fill("Agent 应用开发实习")
+                page.get_by_role("button", name="＋ 添加教育经历", exact=True).click()
+                page.get_by_label("教育1学校", exact=True).fill("虚构测试学院")
+                page.get_by_label("教育1学历", exact=True).fill("硕士（在读）")
+                page.get_by_label("教育1专业", exact=True).fill("计算机")
+                page.get_by_label("教育1开始时间", exact=True).fill("2024-09")
+                page.get_by_label("教育1结束时间", exact=True).fill("至今")
+                page.locator("form textarea").first.fill("结构化样例：早期查询项目2023.01—2023.06，使用 Python 完成查询接口，保留测试记录；近期检索项目2025.01—2025.06，使用 Python 完成检索实验，交付评估脚本。")
+                page.get_by_label("确认将材料和可选 JD 发送给所选模型服务").check()
+                page.get_by_role("button", name="AI 生成简历", exact=True).click()
+                page.get_by_role("button", name="采用并进入编辑器", exact=True).click(timeout=20000)
+                expect(page.get_by_label("教育1学校", exact=True)).to_have_value("虚构测试学院")
+                frame = page.frame_locator('iframe[title="简历预览"]')
+                expect(frame.locator("strong", has_text="评估脚本")).to_be_visible()
+                preview_text = frame.locator("body").inner_text()
+                assert preview_text.index("近期检索项目") < preview_text.index("早期查询项目")
+                for label, filename in (("确认并导出 PDF", "structured.pdf"), ("确认并导出 Word", "structured.docx")):
+                    with page.expect_download(timeout=65000) as download:
+                        page.get_by_role("button", name=label, exact=True).click()
+                    download.value.save_as(output / filename)
+                structured_doc = Document(output / "structured.docx")
+                structured_text = "\n".join(p.text for p in structured_doc.paragraphs)
+                assert "虚构测试学院" in structured_text and "2024-09" in structured_text
+                assert structured_text.index("近期检索项目") < structured_text.index("早期查询项目")
+                assert any(r.bold and r.text == "评估脚本" for p in structured_doc.paragraphs for r in p.runs)
+                with pdfium.PdfDocument(output / "structured.pdf") as pdf:
+                    assert len(pdf) == 1
+                    with closing(pdf[0]) as pdf_page:
+                        pdf_page.render(scale=1.3).to_pil().save(output / "structured-page.png")
+                page.get_by_role("button", name="＋ 新建简历").click()
+                page.get_by_role("button", name="＋ 添加教育经历", exact=True).click()
+                page.get_by_label("教育1学校", exact=True).fill("尚未保存的虚构学校")
+                page.once("dialog", lambda dialog: dialog.dismiss())
+                page.get_by_role("button", name="＋ 新建简历").click()
+                expect(page.get_by_label("教育1学校", exact=True)).to_have_value("尚未保存的虚构学校")
                 page.screenshot(path=str(output / "workbench.png"), full_page=True)
                 assert errors == [], errors
             except Exception:
@@ -149,7 +191,7 @@ def run(output, executable=None):
             finally:
                 browser.close()
         report = {"browser_generation": "passed", "question_skip": "passed", "refresh_recovery": "passed",
-                  "source_backed_manual_resolution": "passed",
+                  "source_backed_manual_resolution": "passed", "education_dates_highlights": "passed", "education_only_unsaved_guard": "passed",
                   "adopt_edit_recheck": "passed", "pdf_and_docx": "passed", "javascript_errors": len(errors),
                   "frozen_executable_tested": bool(executable), "model_service": "local deterministic HTTP fixture",
                   "real_providers_tested": 0, "real_model_quality_verified": False, "clean_machine_tested": False}

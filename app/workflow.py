@@ -12,6 +12,7 @@ from app.generation_models import (
     Plan,
     Review,
     ReviewDraft,
+    WritingReview,
 )
 from app.generation_service import GenerationService
 from app.model_client import ModelOutputError
@@ -19,6 +20,7 @@ from app.models import resume_hash
 from app.providers import ProviderError
 from app.skill import validate_draft, validate_quality
 from app.store import Conflict
+from app.writing_quality import editorial_quality, quality_issues
 
 
 class StaleRun(Exception):
@@ -80,12 +82,15 @@ class Workflow(GenerationService):
         return self.jobs.mutate(job_id, guarded)
 
     def _context(self, job, stage):
-        context = {"instructions": job["skill"]["instructions"], "target_role": job["input"]["target_role"],
+        context = {"instructions": job["skill"].get("stage_instructions", {}).get(stage, job["skill"]["instructions"]), "target_role": job["input"]["target_role"],
                    "reference_date": job["created_at"][:10], "reference_timezone": "UTC",
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
                                     "jd": job["input"]["jd"], "role": job["skill"]["role"]},
                    "evidence": job["evidence"], "answer_context": job.get("answer_context", [])}
         context["fixed_education"] = job["input"].get("education", [])
+        context["loaded_resources"] = job["skill"].get("stage_resources", {}).get(stage, [])
+        context["candidate_context"] = {"career_stage": job["input"].get("career_stage", "unspecified"),
+                                        "has_career_gap": job["input"].get("has_career_gap", False)}
         if stage == "plan":
             context["question_budget"] = 3 if job["input"]["allow_questions"] and not job["answered"] else 0
         if stage in ("draft", "revise"):
@@ -129,6 +134,12 @@ class Workflow(GenerationService):
                            *[s["id"] for s in job["draft"]["sections"]], *[e["id"] for e in job["draft"].get("education", [])]}
                 if any(i.item_id not in allowed for i in value.value.issues):
                     raise ModelOutputError("审阅问题没有定位到本次正文")
+                if value.value.quality is not None:
+                    source_ids = {e["id"] for e in job["evidence"]}
+                    report = value.value.quality
+                    if (any(set(row.item_ids) - allowed or set(row.evidence_ids) - source_ids for row in report.dimensions)
+                            or any(topic.item_id not in allowed or set(topic.evidence_ids) - source_ids for topic in report.interview_topics)):
+                        raise ModelOutputError("质量报告或面试讨论点引用了不存在的内容或材料")
         except asyncio.CancelledError:
             if self.jobs.get(job["id"])["state"] == "cancelled":
                 raise StaleRun from None
@@ -170,7 +181,7 @@ class Workflow(GenerationService):
                     i["severity"] == "blocking" for i in current["issues"]) else "blocked"
                 info = record.ai.model_copy(update={"review_job_id": current["id"], "review_status": status,
                                                     "content_hash": resume_hash(record.content), "issues": current["issues"],
-                                                    "manual_takeover": False})
+                                                    "manual_takeover": False, "quality": current["review"].get("quality") if current["review"] else None})
                 self.store.write_ai(connection, resume_id, record.revision, info)
             current.update(state="ready", run_token="", error="")
 
@@ -204,7 +215,8 @@ class Workflow(GenerationService):
                             return True
                         self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
                         continue
-                schema = {"plan": Plan, "draft": Draft, "review": Review, "revise": Draft}[stage]
+                review_schema = WritingReview if job["skill"].get("stage_instructions") else Review
+                schema = {"plan": Plan, "draft": Draft, "review": review_schema, "revise": Draft}[stage]
                 try:
                     output = await self._request(job, token, schema)
                 except ModelOutputError:
@@ -238,9 +250,13 @@ class Workflow(GenerationService):
                 else:
                     candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
                     quality = validate_quality(candidate_type.model_validate(job["draft"]))
-                    job = self._change(job["id"], token, lambda j, _, review=output, quality=quality: j.update(review=review.model_dump(),
-                                                                                           issues=[i.model_dump() for i in [*review.issues, *quality]]))
-                    editorial_fix = any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
+                    report = editorial_quality(getattr(output, "quality", None), quality, job["evidence"])
+                    review_payload = output.model_dump()
+                    if report:
+                        review_payload["quality"] = report.model_dump()
+                    all_issues = [i.model_dump() for i in [*output.issues, *quality, *quality_issues(report)]]
+                    job = self._change(job["id"], token, lambda j, _, review=review_payload, issues=all_issues: j.update(review=review, issues=issues))
+                    editorial_fix = (report and report.status == "revise") or any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
                     if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
                         self._finish(job, token)
                         return True

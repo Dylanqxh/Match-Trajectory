@@ -27,6 +27,11 @@ class ScriptedModel:
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output
+        from app.generation_models import WritingReview
+        from tests_support import fixture_quality
+
+        if schema is WritingReview and "quality" not in output:
+            output = {**output, "quality": fixture_quality()}
         return Completion(schema.model_validate(output), {"total_tokens": 10})
 
 
@@ -592,3 +597,74 @@ def test_reviewer_can_report_education_issues_without_structure_retry(tmp_path):
     assert finished["state"] == "ready"
     assert finished["calls"] == 3
     assert finished["issues"][0]["item_id"] == "edu1"
+
+
+def test_semantic_quality_requests_revision_even_for_short_factually_correct_draft(tmp_path):
+    from tests.test_writing_coach import quality
+
+    review = {**PASS, "quality": quality("revise")}
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, review, DRAFT, {**PASS, "quality": quality()}])
+    job = runner.submit(request(career_stage="transition", has_career_gap=True))
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready"
+    assert [call[0] for call in model.calls] == ["plan", "draft", "review", "revise", "review"]
+    assert any(i["code"] == "fit" for i in model.calls[3][1]["issues_to_fix"])
+    assert runner.adopt(job["id"]).ai.quality["status"] == "ready"
+    assert model.calls[0][1]["candidate_context"] == {"career_stage": "transition", "has_career_gap": True}
+    assert "references/questions.md" in model.calls[0][1]["loaded_resources"]
+    assert "references/questions.md" not in model.calls[1][1]["loaded_resources"]
+
+
+def test_quality_gap_is_not_infinite_rewrite_or_fact_block(tmp_path):
+    from tests.test_writing_coach import quality
+
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, {**PASS, "quality": quality("insufficient")}])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready" and len(model.calls) == 3
+    row = runner.adopt(job["id"])
+    assert row.ai.review_status == "passed" and row.ai.quality["status"] == "insufficient"
+    assert not row.ai.has_blockers()
+
+
+def test_quality_references_are_checked_and_original_budget_is_preserved(tmp_path):
+    from tests.test_writing_coach import quality
+
+    bad = quality()
+    bad["dimensions"][0]["evidence_ids"] = ["not-owned"]
+    runner, jobs, _, _, _ = setup(tmp_path, [PLAN, DRAFT, {**PASS, "quality": bad}, {**PASS, "quality": quality()}])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready" and result["calls"] == 4
+    assert result["call_log"][2]["outcome"] == "invalid_output"
+
+
+def test_legacy_skill_snapshot_remains_readable_and_has_no_implied_quality_score(tmp_path):
+    runner, jobs, _, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+
+    def legacy(current, _):
+        for key in ("stage_instructions", "stage_resources", "resources"):
+            current["skill"].pop(key)
+
+    jobs.mutate(job["id"], legacy)
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["state"] == "ready"
+    record = runner.adopt(job["id"])
+    assert record.ai.review_status == "passed" and record.ai.quality is None
+
+
+def test_editing_invalidates_quality_without_overwriting_original_job_report(tmp_path):
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    record = runner.adopt(job["id"])
+    assert record.ai.quality["status"] == "ready"
+    content = record.content.model_copy(deep=True)
+    content.sections[0].items[0].text = "使用 Java 完成课程预约查询接口。"
+    changed = store.save(record.id, record.revision, content)
+    assert changed.ai.quality is None and changed.ai.review_status == "unreviewed"
+    assert jobs.get(job["id"])["review"]["quality"]["status"] == "ready"

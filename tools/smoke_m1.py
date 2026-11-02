@@ -94,7 +94,10 @@ def run(output, executable=None):
                 expect(page.get_by_role("heading", name="AI 候选简历", exact=True)).to_be_visible()
                 page.get_by_role("button", name="采用并进入编辑器", exact=True).click()
                 expect(page.get_by_role("heading", name="编辑内容", exact=True)).to_be_visible()
+                expect(page.get_by_test_id("writing-quality-state")).to_contain_text("达到写作检查要求")
                 page.get_by_label("姓名", exact=True).fill("生成测试用户（修改）")
+                expect(page.get_by_text("正文已修改，上一版写作质量结论已失效，请保存并重新审阅。", exact=True)).to_be_visible()
+                expect(page.get_by_test_id("writing-quality-state")).to_have_count(0)
                 page.get_by_role("button", name="保存并重新审阅", exact=True).click()
                 expect(page.get_by_test_id("ai-review-state")).to_contain_text("审阅通过", timeout=20000)
                 for label, filename in (("确认并导出 PDF", "resume.pdf"), ("确认并导出 Word", "resume.docx")):
@@ -149,6 +152,9 @@ def run(output, executable=None):
                 page.get_by_label("姓名", exact=True).fill("结构测试用户")
                 page.get_by_label("联系方式", exact=True).fill("structure@example.com")
                 page.get_by_label("目标岗位", exact=True).fill("Agent 应用开发实习")
+                page.get_by_text("求职背景（可选，用于调整写法）", exact=True).click()
+                page.get_by_label("求职阶段", exact=True).select_option("transition")
+                page.get_by_label("有职业空窗（可选，不必说明私人原因）", exact=True).check()
                 page.get_by_role("button", name="＋ 添加教育经历", exact=True).click()
                 page.get_by_label("教育1学校", exact=True).fill("虚构测试学院")
                 page.get_by_label("教育1学历", exact=True).fill("硕士（在读）")
@@ -159,7 +165,13 @@ def run(output, executable=None):
                 page.get_by_label("确认将材料和可选 JD 发送给所选模型服务").check()
                 page.get_by_role("button", name="AI 生成简历", exact=True).click()
                 page.get_by_role("button", name="采用并进入编辑器", exact=True).click(timeout=20000)
+                expect(page.get_by_role("heading", name="编辑内容", exact=True)).to_be_visible()
                 expect(page.get_by_label("教育1学校", exact=True)).to_have_value("虚构测试学院")
+                resume_id = page.evaluate("localStorage.getItem('mt_resume_id')")
+                resume_info = page.request.get(url + f"/api/resumes/{resume_id}").json()
+                job_info = page.request.get(url + f"/api/generation-jobs/{resume_info['ai']['job_id']}").json()
+                assert job_info["input"]["career_stage"] == "transition" and job_info["input"]["has_career_gap"]
+                assert "references/candidates/returning.md" in job_info["skill"]["resources"]
                 frame = page.frame_locator('iframe[title="简历预览"]')
                 expect(frame.locator("strong", has_text="评估脚本")).to_be_visible()
                 preview_text = frame.locator("body").inner_text()
@@ -191,7 +203,7 @@ def run(output, executable=None):
             finally:
                 browser.close()
         report = {"browser_generation": "passed", "question_skip": "passed", "refresh_recovery": "passed",
-                  "source_backed_manual_resolution": "passed", "education_dates_highlights": "passed", "education_only_unsaved_guard": "passed",
+                  "source_backed_manual_resolution": "passed", "education_dates_highlights": "passed", "education_only_unsaved_guard": "passed", "quality_current_version": "passed", "career_context_routing": "passed",
                   "adopt_edit_recheck": "passed", "pdf_and_docx": "passed", "javascript_errors": len(errors),
                   "frozen_executable_tested": bool(executable), "model_service": "local deterministic HTTP fixture",
                   "real_providers_tested": 0, "real_model_quality_verified": False, "clean_machine_tested": False}

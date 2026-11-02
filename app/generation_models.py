@@ -128,6 +128,7 @@ class Review(StrictModel):
     verdict: Literal["pass", "blocked"]
     issues: list[Issue] = Field(default_factory=list, max_length=40)
     strengths: list[str] = Field(default_factory=list, max_length=5)
+    quality: "QualityReview | None" = None
 
     @model_validator(mode="after")
     def check_verdict(self):
@@ -135,6 +136,53 @@ class Review(StrictModel):
         if (self.verdict == "blocked") != blocked:
             raise ValueError("审阅结论与阻断问题不一致")
         return self
+
+
+class QualityDimension(StrictModel):
+    dimension: Literal["fit", "contribution", "evidence", "readability"]
+    score: Literal[0, 1, 2] | None
+    reason: str = Field(min_length=1, max_length=300)
+    item_ids: list[str] = Field(default_factory=list, max_length=8)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=12)
+    action: Literal["keep", "revise", "need_input", "not_applicable"]
+
+    @model_validator(mode="after")
+    def consistent_action(self):
+        if (self.score is None) != (self.action == "not_applicable"):
+            raise ValueError("质量不适用须与空分数一致")
+        if self.action == "revise" and (not self.item_ids or not self.evidence_ids):
+            raise ValueError("质量修正须定位当前内容和已有证据")
+        if self.score == 2 and (not self.item_ids or not self.evidence_ids):
+            raise ValueError("质量高分须定位当前内容和已有证据")
+        if self.score == 0 and self.action == "keep":
+            raise ValueError("质量零分须说明修正或材料缺口")
+        return self
+
+
+class InterviewTopic(StrictModel):
+    item_id: str = Field(min_length=1, max_length=80)
+    question: str = Field(min_length=1, max_length=180)
+    evidence_ids: list[str] = Field(min_length=1, max_length=12)
+
+
+class QualityReview(StrictModel):
+    status: Literal["ready", "revise", "insufficient"]
+    dimensions: list[QualityDimension] = Field(min_length=4, max_length=4)
+    interview_topics: list[InterviewTopic] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def consistent_status(self):
+        if {row.dimension for row in self.dimensions} != {"fit", "contribution", "evidence", "readability"}:
+            raise ValueError("质量报告必须包含四个不同维度")
+        actions = {row.action for row in self.dimensions}
+        expected = "revise" if "revise" in actions else "insufficient" if "need_input" in actions else "ready"
+        if self.status != expected or actions == {"not_applicable"}:
+            raise ValueError("质量结论与改进动作不一致")
+        return self
+
+
+class WritingReview(Review):
+    quality: QualityReview
 
 
 class GenerationInput(StrictModel):
@@ -147,6 +195,8 @@ class GenerationInput(StrictModel):
     allow_questions: bool = True
     send_materials: bool = False
     education: list[Education] = Field(default_factory=list, max_length=8)
+    career_stage: Literal["unspecified", "entry", "experienced", "transition"] = "unspecified"
+    has_career_gap: bool = False
 
 
 class AnswerInput(StrictModel):

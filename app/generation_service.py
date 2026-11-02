@@ -44,7 +44,7 @@ class GenerationService:
         if inputs.source_text and (not inputs.name or not inputs.contact):
             raise ValueError("请先填写姓名、联系方式和目标岗位；也可以使用化名及求职专用邮箱")
         config = self.registry.get(self.registry.current) if inputs.source_text else None
-        skill = load_skill(inputs.target_role)
+        skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap)
         extra = None if inputs.source_text else {"state": "ready", "framework": True,
                                                 "error": "当前只有目标，没有个人材料。请补充课程、实践、作品或工作片段后重新生成。"}
         evidence = [e.model_dump() for e in build_evidence(inputs.source_text)]
@@ -144,7 +144,7 @@ class GenerationService:
             status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
                 i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
             info = AIInfo(job_id=job_id, review_job_id=job_id, review_status=status, content_hash=resume_hash(content),
-                          skill_version=job["skill"]["version"], issues=job["issues"],
+                          skill_version=job["skill"]["version"], issues=job["issues"], quality=job.get("review", {}).get("quality") if job.get("review") else None,
                           source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
             record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
             job["adopted_resume_id"] = record.id
@@ -164,7 +164,8 @@ class GenerationService:
         config = self.registry.get(self.registry.current)
         inputs = {**original["input"], "request_id": request_id, "target_role": record.content.target_role,
                   "review_resume_id": resume_id, "base_revision": revision}
-        job = self.jobs.create(inputs, self.registry.current, self.registry.describe(config), load_skill(record.content.target_role),
+        skill = load_skill(record.content.target_role, inputs.get("career_stage", "unspecified"), inputs.get("has_career_gap", False))
+        job = self.jobs.create(inputs, self.registry.current, self.registry.describe(config), skill,
                                original["evidence"], mode="recheck", extra={"stage": "review", "draft": draft.model_dump(),
                                "answer_context": original.get("answer_context", []), "target_hash": resume_hash(record.content)})
         self.wake()

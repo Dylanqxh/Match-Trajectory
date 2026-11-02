@@ -5,6 +5,7 @@ import { GenerationPanel } from "./GenerationPanel";
 import { ManualReview } from "./ManualReview";
 import { EducationFields } from "./EducationFields";
 import { ExperienceFields } from "./ExperienceFields";
+import { QualityReport } from "./QualityReport";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -16,6 +17,8 @@ export default function App() {
   const [jd, setJd] = useState("");
   const [sendMaterials, setSendMaterials] = useState(false);
   const [allowQuestions, setAllowQuestions] = useState(true);
+  const [careerStage, setCareerStage] = useState("unspecified");
+  const [careerGap, setCareerGap] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<GenerationSummary[]>([]);
   const [modelStatus, setModelStatus] = useState("尚未连接模型");
@@ -31,9 +34,9 @@ export default function App() {
   const [preview, setPreview] = useState("");
   const [scale, setScale] = useState(0.8);
   const previewBox = useRef<HTMLDivElement>(null);
-  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd });
+  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd, careerStage, careerGap });
   const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim()
-    || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
+    || careerStage !== "unspecified" || careerGap || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
 
   function adopt(row: Resume) {
     setRecord(row); setContent(row.content); setDirty(false); setError("");
@@ -102,7 +105,7 @@ export default function App() {
       if (!content.name.trim() || !content.contact.trim() || !content.target_role.trim()) throw new Error("请先填写姓名、联系方式和目标岗位");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
       const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
-        education: clean(content).education, source_text: source, jd, allow_questions: allowQuestions, send_materials: sendMaterials };
+        education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap, allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
       if (generationRequest.current?.key !== key) generationRequest.current = { key, id: crypto.randomUUID() };
       const job = await api<GenerationJob>("/api/generation-jobs", { ...payload, request_id: generationRequest.current.id });
@@ -159,7 +162,7 @@ export default function App() {
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={busy} onClick={() => {
-        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
+        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
       <div className="nav-heading">我的简历 <span>{list.length}</span></div>
       <nav aria-label="我的简历">{list.map(row => <button key={row.id} className={`resume-link ${record?.id === row.id ? "active" : ""}`} disabled={busy}
@@ -192,13 +195,17 @@ export default function App() {
           <label>目标岗位<input required list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如 Java 后端、算法、产品经理"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
           <label>联系方式<input required value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="必填：手机号或邮箱，可用求职专用联系方式"/></label>
           <p className="fine">姓名、联系方式和目标岗位必填；学校与经历时间按事实填写，未知留空。</p>
+          <details><summary>求职背景（可选，用于调整写法）</summary>
+            <label>求职阶段<select aria-label="求职阶段" value={careerStage} onChange={e => setCareerStage(e.target.value)}><option value="unspecified">不确定／通用</option><option value="entry">校招／初次求职</option><option value="experienced">社招／已有经验</option><option value="transition">转岗</option></select></label>
+            <label className="checkbox-label"><input type="checkbox" checked={careerGap} onChange={e => setCareerGap(e.target.checked)}/>有职业空窗（可选，不必说明私人原因）</label>
+          </details>
           <EducationFields rows={content.education || []} onChange={education => setContent({ ...content, education })}/>
           <label>现有材料<textarea aria-label="现有材料" rows={7} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="课程、项目、工作、作品或活动都可以。写自己做了什么、用什么方法、有何交付或验证；不完整也可以。"/></label>
           <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
           <details><summary>有具体岗位 JD？可选填写</summary><label>岗位 JD<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)}/></label></details>
           <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
           <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
-          <p className="fine">姓名和联系方式单独留在本机；教育信息会作为材料发送。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
+          <p className="fine">姓名和联系方式单独留在本机；教育信息和所选求职背景会作为材料发送。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
           <button className="primary full" type="submit">AI 生成简历</button>
           <button className="text-button full" type="button" onClick={() => void action(async () => {
             adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
@@ -224,7 +231,8 @@ export default function App() {
         <section className="preview-panel"><div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
           <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
           <div className="export-panel"><strong>确认当前内容后导出</strong><p>点击即表示你已核对当前版本；有修改时会先保存。</p>
-            {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，未经 AI 审阅" : record.ai.review_status === "passed" ? "当前版本 AI 审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</p>
+            {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</p>
+              <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
               {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
                 {issue.resolution?.explanation && <p>核对说明：{issue.resolution.explanation}</p>}
                 {unresolvedBlocking(issue) && <button className="text-button" disabled={busy} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}

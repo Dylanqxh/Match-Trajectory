@@ -113,6 +113,7 @@ class AIInfo(StrictModel):
     issues: list[dict] = Field(default_factory=list)
     manual_takeover: bool = False
     resolution_history: list[dict] = Field(default_factory=list)
+    quality: dict | None = None
 
     def has_blockers(self) -> bool:
         return any(i.get("severity") == "blocking" and i.get("resolution", {}).get("action") not in ("deleted", "source_reviewed") for i in self.issues)

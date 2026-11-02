@@ -29,3 +29,5 @@
 .manual-evidence > span > span, .manual-evidence strong { display: block; }
 
 .education-fields{margin:16px 0;padding:12px 0;border-top:1px solid #dce4e0}.bullet-editor{margin-bottom:16px}.bullet-editor .field-help{margin-top:4px}.bullet-editor label.fine input{font-size:12px}
+
+.quality-report{margin:14px 0;padding:12px;border:1px solid #dce4e0;border-radius:8px;background:#f7faf8}.quality-report h3{margin:0 0 8px}.quality-report dl{font-size:12px;margin:8px 0}.quality-report dl>div{margin:10px 0}.quality-report dd{margin:4px 0 0}.quality-report small{display:block;color:#65736d;margin-top:4px;overflow-wrap:anywhere}

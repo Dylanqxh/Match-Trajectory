@@ -46,7 +46,8 @@ class JobStore:
                     raise Conflict("相同请求标识对应不同内容，请重新发起任务")
                 return json.loads(existing["data"])
             job = {"id": uuid.uuid4().hex, "input": inputs, "config_revision": config_revision, "provider": provider,
-                   "skill": {"role": skill.role, "version": skill.version, "instructions": skill.instructions},
+                   "skill": {"role": skill.role, "version": skill.version, "instructions": skill.instructions,
+                             "resources": skill.resources, "stage_resources": skill.stage_resources, "stage_instructions": skill.stage_instructions},
                    "evidence": evidence, "state": "queued", "stage": "plan", "mode": mode,
                    "calls": 0, "revisions": 0, "elapsed_ms": 0, "attempts": {}, "call_log": [],
                    "plan": None, "draft": None, "review": None, "issues": [], "error": "",

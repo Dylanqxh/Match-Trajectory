@@ -176,7 +176,7 @@ class ResumeStore:
             changed = current.model_copy(update={"revision": expected_revision + 1, "confirmed_revision": None,
                                                   "content": content, "facts": facts, "updated_at": timestamp()})
             if current.ai:
-                changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False,
+                changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False, "quality": None,
                                                            "issues": resolve_deleted_issues(current, content, changed.revision)})
             result = connection.execute(update(resumes).where(
                 resumes.c.id == resume_id, resumes.c.revision == expected_revision,

@@ -3,7 +3,12 @@ export interface Education extends Period { id: string; school: string; degree: 
 export interface Item { id: string; text: string; highlights?: string[] }
 export interface Section extends Period { id: string; title: string; kind?: string; organization?: string; role?: string; items: Item[] }
 export interface Content { name: string; target_role: string; contact: string; summary: string; education: Education[]; sections: Section[] }
-export interface AIInfo { job_id: string; review_job_id: string; review_status: "passed" | "blocked" | "unreviewed"; manual_takeover: boolean; issues: GenerationIssue[] }
+export interface WritingQuality {
+  status: "ready" | "revise" | "insufficient";
+  dimensions: { dimension: "fit" | "contribution" | "evidence" | "readability"; score: number | null; reason: string; item_ids: string[]; evidence_ids: string[]; action: string }[];
+  interview_topics: { item_id: string; question: string; evidence_ids: string[] }[];
+}
+export interface AIInfo { job_id: string; review_job_id: string; review_status: "passed" | "blocked" | "unreviewed"; manual_takeover: boolean; issues: GenerationIssue[]; quality?: WritingQuality | null }
 export interface Resume { id: string; revision: number; confirmed_revision: number | null; origin: "manual" | "demo" | "ai"; content: Content; updated_at: string; ai: AIInfo | null }
 export interface Summary { id: string; revision: number; origin: string; name: string; target_role: string }
 export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", education: [], sections: [] };
@@ -16,10 +21,11 @@ export interface GenerationJob extends GenerationSummary {
   continuation?: { allowed: boolean; reason: string };
   last_diagnostic?: { category: string; fields: { path: string; type: string; rule?: string }[]; finish_reason?: string };
   service_warning?: string;
-  input: { target_role: string }; calls: number; revisions: number; error: string; framework: boolean; question_group: string;
+  input: { target_role: string; career_stage?: string; has_career_gap?: boolean }; calls: number; revisions: number; error: string; framework: boolean; question_group: string;
+  skill?: { role: string; version: string; resources?: string[]; stage_resources?: Record<string, string[]> };
   plan: { questions: { id: string; text: string }[]; gaps: string[] } | null;
   draft: { summary: { text: string } | null; education?: Education[]; sections: Section[] } | null;
-  evidence: { id: string; text: string }[]; issues: GenerationIssue[]; review: { verdict: string } | null;
+  evidence: { id: string; text: string }[]; issues: GenerationIssue[]; review: { verdict: string; quality?: WritingQuality | null } | null;
 }
 
 export async function request(path: string, options: RequestInit = {}): Promise<Response> {

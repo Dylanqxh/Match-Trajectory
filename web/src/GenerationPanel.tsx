@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, GenerationJob, Resume } from "./api";
 import { ResumeText } from "./ResumeText";
+import { QualityReport } from "./QualityReport";
 
 const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达" };
 const states: Record<string, string> = { queued: "等待执行", running: "正在处理", waiting_input: "补充一点信息", ready: "候选已保存", failed: "本次处理未完成", interrupted: "任务已中断", cancelled: "已取消" };
@@ -56,11 +57,13 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
         <div className="button-row"><button className="primary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers, skip: false }))}>提交补充并生成</button>
           <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，直接生成</button></div></div>}
       {job.draft && <div className="candidate-content">
-        <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "AI 审阅通过；仍需你核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
+        <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "事实审阅通过；写作质量见单独报告，仍需核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
         {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[row.start_date, row.end_date].filter(Boolean).join(" — ")}</p>)}
         {job.draft.summary && <p>{job.draft.summary.text}</p>}
         {job.draft.sections.map(section => <section key={section.id}><h3>{section.title}</h3><p className="fine">{[section.organization, section.role, [section.start_date, section.end_date].filter(Boolean).join(" — ")].filter(Boolean).join(" · ")}</p><ul>{section.items.map(item => <li key={item.id}><ResumeText text={item.text} highlights={item.highlights}/></li>)}</ul></section>)}
       </div>}
+      {job.draft && <QualityReport report={job.review?.quality} sections={job.draft.sections} education={job.draft.education}/>}
+      {job.skill?.role === "general" && <p className="notice">当前使用通用岗位规则，此方向尚未专项验证。</p>}
       {job.issues.length > 0 && <div className="generation-issues"><h3>需要核对的地方</h3>{job.issues.map((issue, index) => <p key={index}>
         <strong>{issue.severity === "blocking" ? "需修正" : "建议"}：</strong>{issue.message}{issue.suggestion && <small>{issue.suggestion}</small>}</p>)}</div>}
       <div className="button-row generation-actions">
@@ -74,7 +77,9 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
         <p>模型请求 {job.calls} / 8 次；内容修正 {job.revisions} / 2 轮。费用以模型供应商账单为准。</p>
         <p>引用只表示使用了对应用户陈述，不表示系统已客观核实。</p>
         {job.last_diagnostic && <div><strong>上次输出诊断：{({ schema: "字段结构不符合约定", invalid_json: "JSON 格式不完整", empty: "模型返回空白", truncated: "模型输出被截断", incomplete: "模型未完整输出", response_envelope: "响应封装异常", structure: "结构或引用检查未通过" } as Record<string, string>)[job.last_diagnostic.category] || "输出检查未通过"}</strong>
-          {job.last_diagnostic.fields.map((field, index) => <p key={index}>{field.path} · {field.rule ? ({ unique_ids: "段落标识重复", body_length: "正文超过长度限制", summary_id: "简介标识不符合约定", review_verdict: "审阅结论与问题列表不一致", question_decision: "补问决策与问题列表不一致", unique_question_ids: "问题标识重复" } as Record<string, string>)[field.rule] || field.type : field.type}</p>)}</div>}
+          {job.last_diagnostic.fields.map((field, index) => <p key={index}>{field.path} · {field.rule ? ({ unique_ids: "段落标识重复", body_length: "正文超过长度限制", summary_id: "简介标识不符合约定", review_verdict: "审阅结论与问题列表不一致", question_decision: "补问决策与问题列表不一致", unique_question_ids: "问题标识重复", quality_status: "质量结论与改进动作不一致", quality_dimensions: "质量维度不完整或重复", quality_evidence: "质量意见缺少定位依据", quality_score: "质量评分与动作不一致" } as Record<string, string>)[field.rule] || field.type : field.type}</p>)}</div>}
+        <p>当前岗位规则：{job.skill?.role || "旧版"}；规则版本：{job.skill?.version || "未知"}</p>
+        {job.skill?.resources && <p>已加载参考：{job.skill.resources.join("、")}</p>}
         {job.evidence.map(item => <p className="source-evidence" key={item.id}><strong>{item.id}</strong> {item.text}</p>)}
       </details>
     </>}

@@ -40,6 +40,10 @@ class Handler(BaseHTTPRequestHandler):
             output = {"sections": [{"id": "projects", "title": "项目经历", "items": [
                 {"id": "item1", "text": context["evidence"][0]["text"], "fact_ids": ["e1"]},
             ]}]}
+        if "当前阶段：review" in system:
+            output["quality"] = {"status": "ready", "dimensions": [
+                {"dimension": name, "score": 2, "reason": "本地协议测试固定结构，不代表真实写作质量。", "item_ids": ["document"], "evidence_ids": ["e1"], "action": "keep"}
+                for name in ("fit", "contribution", "evidence", "readability")], "interview_topics": []}
         time.sleep(0.05)
         data = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(output, ensure_ascii=False)}}],
                            "usage": {"total_tokens": 10}}, ensure_ascii=False).encode()

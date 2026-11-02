@@ -1,7 +1,8 @@
 import hashlib
+import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.generation_models import Draft, Evidence, Issue
@@ -22,18 +23,34 @@ class SkillBundle:
     role: str
     instructions: str
     version: str
+    resources: list[str] = field(default_factory=list)
+    stage_resources: dict[str, list[str]] = field(default_factory=dict)
+    stage_instructions: dict[str, str] = field(default_factory=dict)
 
 
-def load_skill(target_role: str) -> SkillBundle:
+def load_skill(target_role: str, career_stage="unspecified", has_career_gap=False) -> SkillBundle:
     order = ("product", "operations", "data-analysis", "algorithm", "backend")
     role = next((key for key in order if any(word in target_role.lower() for word in ROLE_WORDS[key])), "general")
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "skills" / "resume-writing"
-    texts = [(root / "SKILL.md").read_text(encoding="utf-8"),
-             (root / "references" / "quality-rubric.md").read_text(encoding="utf-8"),
-             (root / "references" / "editorial.md").read_text(encoding="utf-8"),
-             (root / "references" / "roles" / (role + ".md")).read_text(encoding="utf-8")]
-    instructions = "\n\n".join(texts)
-    return SkillBundle(role, instructions, hashlib.sha256(instructions.encode()).hexdigest()[:16])
+    base = ["SKILL.md", "references/contract.md", "references/evidence/common.md", f"references/roles/{role}.md", "references/candidates/common.md"]
+    candidate = {"entry": "entry", "experienced": "experienced", "transition": "transition"}.get(career_stage)
+    if candidate:
+        base.append(f"references/candidates/{candidate}.md")
+    if has_career_gap:
+        base.append("references/candidates/returning.md")
+    extras = {"plan": ["references/questions.md"], "draft": ["references/editorial.md"],
+              "review": ["references/quality-rubric.md", "references/review-boundaries.md"],
+              "revise": ["references/editorial.md", "references/quality-rubric.md"]}
+    example_path = "examples/writing-boundaries.json"
+    examples = json.loads((root / example_path).read_text(encoding="utf-8"))
+    selected = [row for row in examples if row["role"] == role]
+    example_text = "合成写法演示（平庸／改进／越界）：只学习方法，所有案例事实均不属于用户，不可引用或复制。\n" + json.dumps(selected, ensure_ascii=False)
+    stage_resources = {stage: [*base, *paths, example_path] for stage, paths in extras.items()}
+    stage_instructions = {stage: "\n\n".join([*[(root / path).read_text(encoding="utf-8") for path in paths if path != example_path], example_text])
+                          for stage, paths in stage_resources.items()}
+    resources = list(dict.fromkeys(path for paths in stage_resources.values() for path in paths))
+    version = hashlib.sha256(json.dumps(stage_instructions, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    return SkillBundle(role, stage_instructions["draft"], version, resources, stage_resources, stage_instructions)
 
 
 def build_evidence(text: str, prefix: str = "e") -> list[Evidence]:

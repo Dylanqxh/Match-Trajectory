@@ -10,7 +10,7 @@ from app.providers import ProviderConfig, ProviderError
 
 REQUEST_TIMEOUT = 45
 MAX_RESPONSE_BYTES = 262144
-OUTPUT_CONTRACT_VERSION = "2026-11-02.3"
+OUTPUT_CONTRACT_VERSION = "2026-11-02.4"
 
 
 class ModelOutputError(ProviderError):
@@ -33,8 +33,8 @@ def format_examples(stage, context):
             "kind": "project", "start_date": "", "end_date": "", "organization": "", "role": "", "fact_ids": [ref], "items": [
             {"id": "section_1_item_1", "text": "<仅根据原文表达；此处是格式占位符，不得复制>", "fact_ids": [ref]},
         ]}]}]
-    return [{"verdict": "pass", "issues": [], "strengths": []},
-            {"verdict": "blocked", "issues": [{"item_id": "document", "severity": "blocking", "code": "unsupported", "message": "<说明实际发现的问题>"}], "strengths": []}]
+    # The schema supplies shape; canned review outcomes can anchor the verdict.
+    return []
 
 
 def safe_validation_fields(exc, schema):
@@ -51,7 +51,10 @@ def safe_validation_fields(exc, schema):
 
     collect(schema.model_json_schema())
     rules = {"段落标识重复": "unique_ids", "候选正文过长": "body_length", "简介标识必须为 __summary": "summary_id",
-             "审阅结论与阻断问题不一致": "review_verdict", "ask 需要问题": "question_decision", "问题标识重复": "unique_question_ids"}
+             "审阅结论与阻断问题不一致": "review_verdict", "ask 需要问题": "question_decision", "问题标识重复": "unique_question_ids",
+             "质量结论与改进动作不一致": "quality_status", "质量报告必须包含四个不同维度": "quality_dimensions",
+             "质量修正须定位当前内容和已有证据": "quality_evidence", "质量高分须定位当前内容和已有证据": "quality_evidence",
+             "质量不适用须与空分数一致": "quality_score", "质量零分须说明修正或材料缺口": "quality_score"}
     fields = []
     for error in exc.errors(include_input=False, include_url=False, include_context=False)[:12]:
         field = {"path": "/" + "/".join(str(part) if isinstance(part, int) or part in names else "<extra>" for part in error["loc"]),

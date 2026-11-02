@@ -5,6 +5,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from tests_support import fixture_quality
 
 
 def transport(request):
@@ -16,7 +17,7 @@ def transport(request):
         if "当前阶段：plan" in system:
             content = {"decision": "draft", "selected_fact_ids": ["e1"]}
         elif "当前阶段：review" in system:
-            content = {"verdict": "pass", "issues": []}
+            content = {"verdict": "pass", "issues": [], "quality": fixture_quality()}
         else:
             content = {"sections": [{"id": "projects", "title": "项目经历", "items": [
                 {"id": "item1", "text": "使用 Java 完成查询接口。", "fact_ids": ["e1"]},

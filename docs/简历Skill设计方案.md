@@ -1,6 +1,6 @@
 # 简历 Skill 设计方案
 
-2026-11-02｜设计基线；M1 已创建运行 Skill，实际范围与证据见 [README](../README.md)，真实模型效果未验证
+2026-11-02｜写作教练修订：入口、参考层、分阶段加载与双维审阅已接入；真实供应商效果对照待验证，实际范围见 [README](../README.md)
 
 相关文档：[产品方案](互联网求职简历Agent产品设计方案.md) · [Agent 架构](简历Agent架构设计方案.md)
 
@@ -33,13 +33,21 @@
 
 **选择一份通用 Skill，按需组合岗位规则。** 统一事实与写作标准，岗位差异放入参考文件；避免一份巨型提示词，也避免五套互相重复的流程。
 
-完整规则的目标结构如下；M1 已实现入口、质量规则和岗位参考，其余文件按需要补充：
+当前运行结构如下；宿主按岗位、求职背景与执行阶段加载，并随任务冻结内容与资源清单：
 
 ```text
 skills/resume-writing/
   SKILL.md                         # 目的、底线、阶段与参考文件路由
   references/contract.md           # 输入输出字段
-  references/quality-rubric.md     # 内容检查标准
+  references/quality-rubric.md     # 事实＋四维写作质量
+  references/editorial.md          # 压缩与版面表达
+  references/questions.md          # 一轮补问的分配
+  references/review-boundaries.md  # 审阅误判边界
+  references/candidates/common.md  # 未知阶段的通用规则
+  references/candidates/entry.md   # 校招
+  references/candidates/experienced.md # 社招
+  references/candidates/transition.md # 转岗
+  references/candidates/returning.md  # 可叠加的空窗规则
   references/evidence/common.md    # 课程、研究、工作、作品等写法
   references/roles/backend.md
   references/roles/algorithm.md
@@ -49,7 +57,7 @@ skills/resume-writing/
   examples/writing-boundaries.json # 少量虚构正反例
 ```
 
-入口以 80—120 行为编写目标，只放共用规则。默认加载一个主方向，必要时补经历写法；不一次加载全部岗位和例子。岗位画像由应用提供，个人资料不写进 Skill，评测答案不进入生成上下文。
+入口优先呈现选材、贡献表达、证据与自检，控制篇幅；字段和误判细节放入参考。默认加载一个主方向，必要时补经历写法；不一次加载全部岗位和例子。岗位画像由应用提供，个人资料不写进 Skill，评测答案不进入生成上下文。
 
 ## 3. 通用规则：选择、表达、追问
 
@@ -140,4 +148,6 @@ JSON Schema、引用存在性、版本冲突、预算、工具权限和文件导
 
 事实扩写单独判定，不能被文风高分抵消。其余按相关性、贡献、证据和结构给出有理由的 0／1／2／不适用判断。记录加载资料、调用量、耗时、失败和人工修改；真实可用率以产品试用为准，不将自评分换算成“80% 可用”。
 
-本文保留完整设计目标；M1 已有运行规则和程序回归，真实模型对照实验、行业审阅和用户验证仍待实施。
+当前主 Agent 仍一次独立审阅，同时返回事实结论与四维质量报告，不增加每轮模型请求。每项包含0／1／2／不适用、理由、正文位置、原文引用和改进动作；缺证据与可修正表达分别处理，质量状态由动作校验，事实通过不等于质量通过。
+
+五组全新上下文的探索性指令对照没有观察到明显虚构，部分场景展示了相关经历优先与追问取舍；两组都能写出合理内容，不能据此宣称 Skill 有稳定增益。教学正反例与试验输入分开，试验报告不注入生成上下文。真实供应商重复对照、40场景、行业审阅和用户可用率验证仍待实施。

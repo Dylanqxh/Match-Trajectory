@@ -153,3 +153,9 @@ def test_duplicate_ids_are_diagnosed_without_echoing_resume_text():
             200, json=response(json.dumps(candidate))))).complete(config(), "draft", {}, Draft))
     assert caught.value.diagnostic["fields"][0]["rule"] == "unique_ids"
     assert "private" not in json.dumps(caught.value.diagnostic)
+
+
+def test_review_format_examples_do_not_supply_a_canned_quality_verdict():
+    from app.model_client import format_examples
+
+    assert format_examples("review", {"evidence": [{"id": "e1"}]}) == []

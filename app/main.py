@@ -12,7 +12,7 @@ from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.demo import demo_content
-from app.generation_models import AnswerInput, GenerationInput
+from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
 from app.jobs import JobStore
 from app.model_client import ModelClient, ModelRegistry
 from app.models import (
@@ -210,7 +210,8 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/api/generation-jobs/{job_id}")
     def get_generation_job(job_id: str):
-        return {**jobs.get(job_id), "service_warning": workflow.service_warning}
+        job = jobs.get(job_id)
+        return {**job, "service_warning": workflow.service_warning, "continuation": workflow.continuation(job)}
 
     @app.post("/api/generation-jobs/{job_id}/answer")
     async def answer_generation_job(job_id: str, body: AnswerInput):
@@ -237,6 +238,10 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         if not body.acknowledged:
             raise ValueError("请明确确认已自行核对当前版本")
         return workflow.takeover(resume_id, body.expected_revision)
+
+    @app.post("/api/resumes/{resume_id}/resolve-issue")
+    async def resolve_resume_issue(resume_id: str, body: ResolveIssueInput):
+        return workflow.resolve_issue(resume_id, body.model_dump())
 
     web = web_dir or resource_root() / "web" / "dist"
     if web.is_dir():

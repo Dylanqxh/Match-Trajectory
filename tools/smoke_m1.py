@@ -118,6 +118,29 @@ def run(output, executable=None):
                 expect(page.get_by_role("button", name="跳过，直接生成", exact=True)).to_be_visible(timeout=20000)
                 page.get_by_role("button", name="跳过，直接生成", exact=True).click()
                 expect(page.get_by_role("heading", name="AI 候选简历", exact=True)).to_be_visible(timeout=20000)
+                page.get_by_role("button", name="＋ 新建简历").click()
+                page.get_by_label("姓名", exact=True).fill("人工核对测试用户")
+                page.get_by_label("联系方式", exact=True).fill("manual@example.com")
+                page.get_by_label("目标岗位", exact=True).fill("Java 后端")
+                manual_material = "人工核对场景：使用 Java 完成课程查询接口，编写测试记录。"
+                page.locator("form textarea").first.fill(manual_material)
+                page.get_by_label("确认将材料和可选 JD 发送给所选模型服务").check()
+                page.get_by_role("button", name="AI 生成简历", exact=True).click()
+                page.get_by_role("button", name="采用并进入编辑器", exact=True).click(timeout=20000)
+                page.get_by_role("button", name="自行核对并接管", exact=True).click()
+                expect(page.get_by_role("dialog", name="核对审阅问题", exact=True)).to_be_visible()
+                page.get_by_label("选择材料 e1", exact=True).check()
+                page.get_by_label("核对说明", exact=True).fill("原文明确说明本人完成查询接口并编写测试记录，与当前表述一致。")
+                page.get_by_label("我已核对所选原文支持当前表述", exact=True).check()
+                page.get_by_role("button", name="保存人工核对结果", exact=True).click()
+                expect(page.get_by_role("dialog", name="核对审阅问题", exact=True)).not_to_be_visible()
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.get_by_role("button", name="自行核对并接管", exact=True).click()
+                expect(page.get_by_test_id("ai-review-state")).to_contain_text("用户自行核对")
+                with page.expect_download(timeout=65000) as download:
+                    page.get_by_role("button", name="确认并导出 Word", exact=True).click()
+                download.value.save_as(output / "manual-reviewed.docx")
+                assert manual_material in "\n".join(p.text for p in Document(output / "manual-reviewed.docx").paragraphs)
                 page.screenshot(path=str(output / "workbench.png"), full_page=True)
                 assert errors == [], errors
             except Exception:
@@ -126,6 +149,7 @@ def run(output, executable=None):
             finally:
                 browser.close()
         report = {"browser_generation": "passed", "question_skip": "passed", "refresh_recovery": "passed",
+                  "source_backed_manual_resolution": "passed",
                   "adopt_edit_recheck": "passed", "pdf_and_docx": "passed", "javascript_errors": len(errors),
                   "frozen_executable_tested": bool(executable), "model_service": "local deterministic HTTP fixture",
                   "real_providers_tested": 0, "real_model_quality_verified": False, "clean_machine_tested": False}

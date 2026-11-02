@@ -25,7 +25,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 output = {"decision": "draft", "selected_fact_ids": ["e1"], "focus": ["保留实际动作"]}
         elif "当前阶段：review" in system:
-            output = {"verdict": "pass", "issues": [], "strengths": ["本地协议测试，非真实模型评价"]}
+            if "人工核对场景" in context["evidence"][0]["text"]:
+                output = {"verdict": "blocked", "issues": [{"item_id": "item1", "severity": "blocking", "code": "unsupported", "message": "测试问题：请核对本人动作是否有原文支持"}]}
+            else:
+                output = {"verdict": "pass", "issues": [], "strengths": ["本地协议测试，非真实模型评价"]}
         else:
             output = {"sections": [{"id": "projects", "title": "项目经历", "items": [
                 {"id": "item1", "text": context["evidence"][0]["text"], "fact_ids": ["e1"]},

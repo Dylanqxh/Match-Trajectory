@@ -64,12 +64,15 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       <div className="button-row generation-actions">
         {canAdopt && <button className="primary" disabled={busy} onClick={() => { if (beforeAdopt()) void act(async () => onAdopt(await api<Resume>(`/api/generation-jobs/${jobId}/adopt`, {}))); }}>
           {job.adopted_resume_id ? "打开已采用的简历" : job.framework ? "采用空框架" : "采用并进入编辑器"}</button>}
-        {["failed", "interrupted"].includes(job.state) && <button className="secondary" disabled={busy} onClick={() => void act(() => command("resume"))}>继续任务（保留已用预算）</button>}
+        {["failed", "interrupted"].includes(job.state) && <button className="secondary" disabled={busy || job.continuation?.allowed === false} onClick={() => void act(() => command("resume"))}>继续任务（保留已用预算）</button>}
         {["queued", "running", "waiting_input"].includes(job.state) && <button className="text-button" disabled={busy} onClick={() => void act(() => command("cancel"))}>取消任务</button>}
       </div>
+      {["failed", "interrupted"].includes(job.state) && job.continuation && <p className="fine">{job.continuation.reason}</p>}
       <details className="generation-details"><summary>查看材料依据与执行记录</summary>
         <p>模型请求 {job.calls} / 8 次；内容修正 {job.revisions} / 2 轮。费用以模型供应商账单为准。</p>
         <p>引用只表示使用了对应用户陈述，不表示系统已客观核实。</p>
+        {job.last_diagnostic && <div><strong>上次输出诊断：{({ schema: "字段结构不符合约定", invalid_json: "JSON 格式不完整", empty: "模型返回空白", truncated: "模型输出被截断", incomplete: "模型未完整输出", response_envelope: "响应封装异常", structure: "结构或引用检查未通过" } as Record<string, string>)[job.last_diagnostic.category] || "输出检查未通过"}</strong>
+          {job.last_diagnostic.fields.map((field, index) => <p key={index}>{field.path} · {field.rule ? ({ unique_ids: "段落标识重复", body_length: "正文超过长度限制", summary_id: "简介标识不符合约定", review_verdict: "审阅结论与问题列表不一致", question_decision: "补问决策与问题列表不一致", unique_question_ids: "问题标识重复" } as Record<string, string>)[field.rule] || field.type : field.type}</p>)}</div>}
         {job.evidence.map(item => <p className="source-evidence" key={item.id}><strong>{item.id}</strong> {item.text}</p>)}
       </details>
     </>}

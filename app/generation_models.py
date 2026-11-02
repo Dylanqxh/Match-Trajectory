@@ -39,6 +39,10 @@ class Claim(StrictModel):
     fact_ids: list[str] = Field(min_length=1, max_length=100)
 
 
+class SummaryClaim(Claim):
+    id: Literal["__summary"]
+
+
 class DraftSection(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
     title: str = Field(min_length=1, max_length=60)
@@ -47,7 +51,7 @@ class DraftSection(StrictModel):
 
 class Draft(StrictModel):
     body_limit: ClassVar[int] = 14000
-    summary: Claim | None = None
+    summary: SummaryClaim | None = None
     sections: list[DraftSection] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
@@ -75,6 +79,10 @@ class ReviewClaim(Claim):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class ReviewSummaryClaim(ReviewClaim):
+    id: Literal["__summary"]
+
+
 class ReviewSection(DraftSection):
     items: list[ReviewClaim] = Field(default_factory=list, max_length=30)
 
@@ -83,7 +91,7 @@ class ReviewDraft(Draft):
     """Lossless review projection of every field accepted by the editor."""
 
     body_limit: ClassVar[int] = 20000
-    summary: ReviewClaim | None = None
+    summary: ReviewSummaryClaim | None = None
     sections: list[ReviewSection] = Field(default_factory=list, max_length=12)
 
 
@@ -131,3 +139,12 @@ class AnswerInput(StrictModel):
         if self.skip and self.answers:
             raise ValueError("跳过时不能提交回答")
         return self
+
+
+class ResolveIssueInput(StrictModel):
+    expected_revision: int = Field(ge=1)
+    review_job_id: str = Field(min_length=1, max_length=80)
+    issue_index: int = Field(ge=0)
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    explanation: str = Field(min_length=10, max_length=500)
+    acknowledged: Literal[True]

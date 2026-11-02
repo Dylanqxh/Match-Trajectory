@@ -107,3 +107,49 @@ def test_total_model_deadline_closes_stream(monkeypatch):
     with pytest.raises(ProviderError, match="超时"):
         asyncio.run(client.complete(config(), "review", {}, Review))
     assert stream.closed
+
+
+def test_schema_error_has_safe_field_diagnostics_without_remote_values():
+    from app.model_client import ModelClient, ModelOutputError
+
+    bad = json.dumps({"verdict": "pass", "issues": "never-print-this-secret", "never-print-this-secret": "private material"})
+    with pytest.raises(ModelOutputError) as caught:
+        asyncio.run(ModelClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=response(bad)))).complete(
+            config(), "review", {}, Review))
+    diagnostics = caught.value.diagnostic
+    assert diagnostics["category"] == "schema"
+    assert any(field["path"] == "/issues" and field["type"] == "list_type" for field in diagnostics["fields"])
+    assert "never-print-this-secret" not in json.dumps(diagnostics)
+    assert "private material" not in json.dumps(diagnostics)
+
+
+def test_schema_exposes_required_summary_id_and_request_explains_format():
+    from app.generation_models import Draft
+    from app.model_client import ModelClient
+
+    schema = Draft.model_json_schema()
+    assert any(definition.get("properties", {}).get("id", {}).get("const") == "__summary" for definition in schema["$defs"].values())
+
+    def handler(request):
+        body = json.loads(request.content)
+        context = json.loads(body["messages"][1]["content"])
+        assert context["format_examples"][0]["sections"][0]["items"][0]["fact_ids"] == ["e1"]
+        assert "__summary" in body["messages"][0]["content"]
+        return httpx.Response(200, json=response('{"sections":[{"id":"s1","title":"项目经历","items":[{"id":"i1","text":"原文陈述","fact_ids":["e1"]}]}]}'))
+
+    asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).complete(config(), "draft", {"evidence": [{"id": "e1", "text": "原文陈述"}]}, Draft))
+
+
+def test_duplicate_ids_are_diagnosed_without_echoing_resume_text():
+    from app.generation_models import Draft
+    from app.model_client import ModelClient, ModelOutputError
+
+    candidate = {"sections": [{"id": "s1", "title": "项目经历", "items": [
+        {"id": "same", "text": "private resume text", "fact_ids": ["e1"]},
+        {"id": "same", "text": "another private statement", "fact_ids": ["e1"]},
+    ]}]}
+    with pytest.raises(ModelOutputError) as caught:
+        asyncio.run(ModelClient(transport=httpx.MockTransport(lambda r: httpx.Response(
+            200, json=response(json.dumps(candidate))))).complete(config(), "draft", {}, Draft))
+    assert caught.value.diagnostic["fields"][0]["rule"] == "unique_ids"
+    assert "private" not in json.dumps(caught.value.diagnostic)

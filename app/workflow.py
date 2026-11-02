@@ -74,6 +74,7 @@ class Workflow(GenerationService):
 
     def _context(self, job, stage):
         context = {"instructions": job["skill"]["instructions"], "target_role": job["input"]["target_role"],
+                   "reference_date": job["created_at"][:10], "reference_timezone": "UTC",
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
                                     "jd": job["input"]["jd"], "role": job["skill"]["role"]},
                    "evidence": job["evidence"], "answer_context": job.get("answer_context", [])}
@@ -85,6 +86,8 @@ class Workflow(GenerationService):
             context["candidate"] = job["draft"]
         if stage == "revise":
             context["issues_to_fix"] = job["issues"]
+        if job.get("feedback_key") == f"{stage}:{job['revisions']}" and job.get("last_diagnostic"):
+            context["validation_feedback"] = job["last_diagnostic"]
         return context
 
     async def _request(self, job, token, schema):
@@ -133,12 +136,15 @@ class Workflow(GenerationService):
         def charge(current, _):
             current["elapsed_ms"] += elapsed
             current["request_started"] = None
-            current["call_log"].append({"stage": stage, "duration_ms": elapsed,
-                                        "usage": value.usage if value and not error else {},
-                                        "outcome": "invalid_output" if isinstance(error, ModelOutputError) else "failed" if error else "ok"})
+            entry = {"stage": stage, "duration_ms": elapsed,
+                     "usage": error.usage if isinstance(error, ModelOutputError) else value.usage if value and not error else {},
+                     "outcome": "invalid_output" if isinstance(error, ModelOutputError) else "failed" if error else "ok"}
             if isinstance(error, ModelOutputError):
                 failures = current.setdefault("invalid_outputs", {})
                 failures[key] = failures.get(key, 0) + 1
+                current.update(last_diagnostic=error.diagnostic, feedback_key=key)
+                entry["diagnostic"] = error.diagnostic
+            current["call_log"].append(entry)
 
         self._change(job["id"], token, charge)
         if error:

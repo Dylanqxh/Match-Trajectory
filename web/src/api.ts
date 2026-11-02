@@ -5,9 +5,14 @@ export interface AIInfo { job_id: string; review_job_id: string; review_status: 
 export interface Resume { id: string; revision: number; confirmed_revision: number | null; origin: "manual" | "demo" | "ai"; content: Content; updated_at: string; ai: AIInfo | null }
 export interface Summary { id: string; revision: number; origin: string; name: string; target_role: string }
 export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", sections: [] };
-export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string; resolution?: { action: string; revision: number } }
+export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string; resolution?: { action: string; revision: number; explanation?: string; evidence_ids?: string[] } }
+export function unresolvedBlocking(issue: GenerationIssue): boolean {
+  return issue.severity === "blocking" && !["deleted", "source_reviewed"].includes(issue.resolution?.action || "");
+}
 export interface GenerationSummary { id: string; state: string; stage: string; target_role: string; mode: string; adopted_resume_id: string | null }
 export interface GenerationJob extends GenerationSummary {
+  continuation?: { allowed: boolean; reason: string };
+  last_diagnostic?: { category: string; fields: { path: string; type: string; rule?: string }[]; finish_reason?: string };
   service_warning?: string;
   input: { target_role: string }; calls: number; revisions: number; error: string; framework: boolean; question_group: string;
   plan: { questions: { id: string; text: string }[]; gaps: string[] } | null;

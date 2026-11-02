@@ -440,3 +440,108 @@ def test_legitimate_empty_heading_is_sent_to_reviewer_without_omission(tmp_path)
     runner.recheck(record.id, 2, "empty-heading-full")
     asyncio.run(runner.run_one())
     assert model.calls[-1][1]["candidate"]["sections"][-1] == {"id": "empty", "title": "教育背景", "items": []}
+
+
+def test_structural_retry_receives_safe_feedback_and_persists_reason(tmp_path):
+    from app.model_client import ModelOutputError
+
+    error = ModelOutputError("结构不匹配", diagnostic={"category": "schema", "fields": [{"path": "/summary/id", "type": "literal_error"}]})
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, error, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready"
+    assert model.calls[2][1]["validation_feedback"]["fields"][0]["path"] == "/summary/id"
+    assert "validation_feedback" not in model.calls[3][1]
+    assert result["call_log"][1]["diagnostic"]["category"] == "schema"
+
+
+def test_contract_upgrade_allows_explicit_resume_without_resetting_global_budget(tmp_path):
+    from app.model_client import OUTPUT_CONTRACT_VERSION
+
+    runner, jobs, _, _, model = setup(tmp_path, [DRAFT, PASS])
+    job = runner.submit(request())
+    jobs.mutate(job["id"], lambda j, _: j.update(state="failed", stage="draft", plan=PLAN, calls=3,
+                elapsed_ms=15000, invalid_outputs={"draft:0": 2}, output_contract_version="legacy"))
+    resumed = runner.resume(job["id"])
+    assert resumed["calls"] == 3 and resumed["elapsed_ms"] == 15000
+    assert resumed["output_contract_version"] == OUTPUT_CONTRACT_VERSION
+    assert resumed["validation_history"][0]["invalid_outputs"] == {"draft:0": 2}
+    asyncio.run(runner.run_one())
+    assert jobs.get(job["id"])["calls"] == 5
+    assert [call[0] for call in model.calls] == ["draft", "review"]
+
+
+def test_reviewer_receives_trusted_reference_date(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert model.calls[-1][1]["reference_date"] == jobs.get(job["id"])["created_at"][:10]
+    assert model.calls[-1][1]["reference_timezone"] == "UTC"
+
+
+def blocked_resume(tmp_path):
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, BLOCK, DRAFT, BLOCK, DRAFT, BLOCK])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    return runner, jobs, store, job, runner.adopt(job["id"])
+
+
+def manual_resolution(record, **changes):
+    return {"expected_revision": record.revision, "review_job_id": record.ai.review_job_id, "issue_index": 0,
+            "evidence_ids": ["e1"], "explanation": "原文明确说明本人完成接口实现，与当前表述一致。", "acknowledged": True, **changes}
+
+
+def test_source_backed_manual_resolution_preserves_ai_verdict_and_allows_explicit_takeover(tmp_path):
+    from app.exports import check_export
+    from app.models import ExportRequest
+
+    runner, jobs, store, job, record = blocked_resume(tmp_path)
+    original_issues = jobs.get(job["id"])["issues"]
+    runner.registry = ModelRegistry()
+    resolved = runner.resolve_issue(record.id, manual_resolution(record))
+    assert resolved.ai.review_status == "blocked" and not resolved.ai.manual_takeover
+    assert resolved.ai.issues[0]["resolution"]["action"] == "source_reviewed"
+    assert len(resolved.ai.resolution_history) == 1
+    assert runner.resolve_issue(record.id, manual_resolution(record)).ai.resolution_history == resolved.ai.resolution_history
+    assert jobs.get(job["id"])["issues"] == original_issues
+    store.confirm(record.id, 1)
+    with pytest.raises(Conflict):
+        check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
+    runner.takeover(record.id, 1)
+    store.confirm(record.id, 1)
+    check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
+
+
+@pytest.mark.parametrize("changes", [{"evidence_ids": ["not-owned"]}, {"expected_revision": 2}, {"review_job_id": "wrong-report"}, {"acknowledged": False}])
+def test_manual_resolution_requires_current_report_owned_evidence_and_acknowledgment(tmp_path, changes):
+    runner, _, _, _, record = blocked_resume(tmp_path)
+    with pytest.raises((Conflict, ValueError)):
+        runner.resolve_issue(record.id, manual_resolution(record, **changes))
+
+
+def test_manual_resolution_cannot_bypass_missing_numeric_evidence_and_edits_invalidate_resolution(tmp_path):
+    from app.models import Item
+
+    runner, _, store, _, record = blocked_resume(tmp_path)
+    runner.resolve_issue(record.id, manual_resolution(record))
+    content = record.content.model_copy(deep=True)
+    content.sections[0].items = [Item(id="item1", text="性能提升 99%")]
+    changed = store.save(record.id, 1, content)
+    assert changed.ai.has_blockers()
+    with pytest.raises(Conflict):
+        runner.resolve_issue(record.id, manual_resolution(changed))
+
+
+def test_manual_resolution_accepts_program_reports_larger_than_model_issue_limit(tmp_path):
+    runner, _, store, _, record = blocked_resume(tmp_path)
+    issues = [dict(record.ai.issues[0]) for _ in range(41)]
+    with store.engine.begin() as connection:
+        store.write_ai(connection, record.id, record.revision, record.ai.model_copy(update={"issues": issues}))
+    resolved = runner.resolve_issue(record.id, manual_resolution(record, issue_index=40))
+    assert resolved.ai.issues[40]["resolution"]["action"] == "source_reviewed"
+    assert resolved.ai.has_blockers()
+    with pytest.raises(Conflict):
+        runner.takeover(record.id, record.revision)
+    with pytest.raises(Conflict, match="问题不存在"):
+        runner.resolve_issue(record.id, manual_resolution(record, issue_index=41))

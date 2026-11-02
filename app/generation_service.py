@@ -6,9 +6,10 @@ from app.generation_models import (
     ReviewClaim,
     ReviewDraft,
     ReviewSection,
+    ReviewSummaryClaim,
 )
 from app.jobs import JobStore, fingerprint
-from app.model_client import ModelRegistry
+from app.model_client import OUTPUT_CONTRACT_VERSION, ModelRegistry
 from app.models import AIInfo, ResumeContent, resume_hash
 from app.skill import build_evidence, load_skill, validate_draft
 from app.store import Conflict, ResumeStore
@@ -18,7 +19,8 @@ def content_draft(content, evidence, source_map) -> ReviewDraft:
     refs = [e["id"] for e in evidence]
 
     def claim(item_id, text):
-        return ReviewClaim(id=item_id, text=text, fact_ids=source_map.get(item_id) or refs)
+        model = ReviewSummaryClaim if item_id == "__summary" else ReviewClaim
+        return model(id=item_id, text=text, fact_ids=source_map.get(item_id) or refs)
 
     return ReviewDraft(summary=claim("__summary", content.summary) if content.summary else None,
                        sections=[ReviewSection(id=s.id, title=s.title, items=[claim(i.id, i.text) for i in s.items])
@@ -86,14 +88,32 @@ class GenerationService:
                 raise Conflict("只有失败或中断的任务可以继续")
             if self.registry.describe(config) != job["provider"]:
                 raise Conflict("请连接原任务相同的供应商、地址和模型后继续；切换目标模型请新建任务")
-            key = f"{job['stage']}:{job['revisions']}"
-            if job["calls"] >= 8 or job["elapsed_ms"] >= 180000 or job.get("invalid_outputs", {}).get(key, 0) >= 2:
-                raise Conflict("该任务预算或结构重试已用尽；材料与候选已保留，请新建任务")
+            continuation = self.continuation(job)
+            if not continuation["allowed"]:
+                raise Conflict(continuation["reason"])
+            if job.get("output_contract_version", "legacy") != OUTPUT_CONTRACT_VERSION:
+                job.setdefault("validation_history", []).append({"version": job.get("output_contract_version", "legacy"),
+                                                                 "invalid_outputs": job.get("invalid_outputs", {})})
+                job.update(output_contract_version=OUTPUT_CONTRACT_VERSION, invalid_outputs={})
             job.update(state="queued", config_revision=self.registry.current, error="")
 
         job = self.jobs.mutate(job_id, apply)
         self.wake()
         return job
+
+    @staticmethod
+    def continuation(job):
+        if job["state"] not in ("failed", "interrupted"):
+            return {"allowed": False, "reason": "任务当前无需继续"}
+        if job["calls"] >= 8:
+            return {"allowed": False, "reason": "该任务已使用 8 次模型调用，材料与候选保留；请新建任务"}
+        if job["elapsed_ms"] >= 180000:
+            return {"allowed": False, "reason": "该任务累计执行达到 180 秒，材料与候选保留；请新建任务"}
+        key = f"{job['stage']}:{job['revisions']}"
+        if job.get("invalid_outputs", {}).get(key, 0) >= 2 and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
+            return {"allowed": False, "reason": f"当前阶段连续两次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/8 次）。请查看诊断；新建任务前先确认问题已处理。"}
+        upgraded = job.get("output_contract_version", "legacy") != OUTPUT_CONTRACT_VERSION
+        return {"allowed": True, "reason": "输出校验已更新，可从失败阶段继续，已用次数和耗时不清零" if upgraded else "可从失败阶段继续，已用预算保留"}
 
     def adopt(self, job_id):
         result = []
@@ -157,3 +177,8 @@ class GenerationService:
                                                 "content_hash": resume_hash(record.content)})
             self.store.write_ai(connection, resume_id, revision, info)
             return self.store._read(connection, resume_id)
+
+    def resolve_issue(self, resume_id, payload):
+        from app.manual_review import resolve_issue
+
+        return resolve_issue(self.store, self.jobs, resume_id, payload)

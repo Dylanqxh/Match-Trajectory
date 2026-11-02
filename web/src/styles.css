@@ -21,3 +21,9 @@
 .ai-review-box > p:first-child { color: #315f4e; font-weight: 600; }
 .questions textarea { display: block; width: 100%; margin: 8px 0 15px; }
 .sidebar nav { max-height: 30vh; overflow: auto; }
+.manual-review-modal { max-width: 820px; max-height: 90vh; overflow-y: auto; }
+.manual-evidence-list { max-height: 30vh; overflow: auto; margin-bottom: 18px; border: 1px solid #dce5df; border-radius: 8px; }
+.manual-evidence { display: flex !important; align-items: flex-start; gap: 12px; padding: 12px; border-bottom: 1px solid #e7ede9; margin: 0 !important; }
+.manual-evidence > input { width: auto !important; margin-top: 5px; flex-shrink: 0; }
+.manual-evidence > span { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.manual-evidence > span > span, .manual-evidence strong { display: block; }

@@ -54,9 +54,10 @@ class AIInfo(StrictModel):
     source_map: dict[str, list[str]] = Field(default_factory=dict)
     issues: list[dict] = Field(default_factory=list)
     manual_takeover: bool = False
+    resolution_history: list[dict] = Field(default_factory=list)
 
     def has_blockers(self) -> bool:
-        return any(i.get("severity") == "blocking" and i.get("resolution", {}).get("action") != "deleted" for i in self.issues)
+        return any(i.get("severity") == "blocking" and i.get("resolution", {}).get("action") not in ("deleted", "source_reviewed") for i in self.issues)
 
 
 def resume_hash(content: ResumeContent) -> str:

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, request, Resume, Summary } from "./api";
+import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, request, Resume, Summary, unresolvedBlocking } from "./api";
 import { ModelSettings } from "./ModelSettings";
 import { GenerationPanel } from "./GenerationPanel";
+import { ManualReview } from "./ManualReview";
 
 const roles = ["后端研发", "算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -23,6 +24,7 @@ export default function App() {
   const [status, setStatus] = useState("正在连接本地工作台…");
   const [error, setError] = useState("");
   const [settings, setSettings] = useState(false);
+  const [resolution, setResolution] = useState<{ record: Resume; issueIndex: number } | null>(null);
   const [history, setHistory] = useState<Resume[] | null>(null);
   const [preview, setPreview] = useState("");
   const [scale, setScale] = useState(0.8);
@@ -112,11 +114,21 @@ export default function App() {
     });
   }
   async function takeover() {
-    if (!window.confirm("我已自行核对当前正文中的全部个人事实。接管后保留 AI 来源和旧报告，标记为用户自行核对；已知阻断不能直接清除。确定继续？")) return;
     await action(async () => {
       const row = await save();
+      const index = row.ai?.issues.findIndex(unresolvedBlocking) ?? -1;
+      if (index >= 0) { setResolution({ record: row, issueIndex: index }); return; }
+      if (!window.confirm("我已自行核对当前正文中的全部个人事实。接管后保留 AI 来源和旧报告，标记为用户自行核对。确定继续？")) return;
       adopt(await api<Resume>(`/api/resumes/${row.id}/takeover`, { expected_revision: row.revision, acknowledged: true }));
       setStatus("已标记为用户自行核对，导出前仍需确认当前版本");
+    });
+  }
+  async function resolveIssue(index: number) {
+    await action(async () => {
+      const row = await save();
+      const issue = row.ai?.issues[index];
+      if (!issue || !unresolvedBlocking(issue)) { setStatus("这项问题已处理，请查看当前版本"); return; }
+      setResolution({ record: row, issueIndex: index });
     });
   }
   function jobUpdated(job: GenerationJob) {
@@ -147,7 +159,7 @@ export default function App() {
   }
 
   return <div className="app-shell">
-    <aside className="sidebar">
+    <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={busy} onClick={() => {
         if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
@@ -162,7 +174,7 @@ export default function App() {
       <div className="sidebar-bottom"><button disabled={busy} onClick={() => setSettings(true)}>⚙ 模型连接</button>
         <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1 · AI 生成与核对交付</small></div></div>
     </aside>
-    <main className="main-area">
+    <main className="main-area" inert={resolution ? true : undefined}>
       <header className="topbar"><div><span className="eyebrow">RESUME WORKSPACE</span><h1>简历工作台</h1></div>
         <span className="stage-chip">生成与交付 · M1</span></header>
       <div className="feedback" role="status">{busy ? "正在处理，请稍候…" : status}</div>
@@ -218,11 +230,13 @@ export default function App() {
         <section className="preview-panel"><div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
           <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
           <div className="export-panel"><strong>确认当前内容后导出</strong><p>点击即表示你已核对当前版本；有修改时会先保存。</p>
-            {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，未经 AI 审阅" : record.ai.review_status === "passed" ? "当前版本 AI 审阅通过" : record.ai.review_status === "blocked" ? "当前有需处理的审阅问题" : "当前版本尚未审阅"}</p>
-              {record.ai.issues.map((issue, index) => <p className="fine" key={index}>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>)}
+            {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，未经 AI 审阅" : record.ai.review_status === "passed" ? "当前版本 AI 审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</p>
+              {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
+                {issue.resolution?.explanation && <p>核对说明：{issue.resolution.explanation}</p>}
+                {unresolvedBlocking(issue) && <button className="text-button" disabled={busy} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}
               <button className="secondary" disabled={busy} onClick={() => void recheck()}>保存并重新审阅</button>
               <button className="text-button" disabled={busy} onClick={() => void takeover()}>自行核对并接管</button></div>}
-            <div className="button-row"><button className="primary" disabled={busy || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(i => i.severity === "blocking" && i.resolution?.action !== "deleted")))} onClick={() => void download("pdf")}>确认并导出 PDF</button><button className="secondary" disabled={busy || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(i => i.severity === "blocking" && i.resolution?.action !== "deleted")))} onClick={() => void download("docx")}>确认并导出 Word</button></div>
+            <div className="button-row"><button className="primary" disabled={busy || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(unresolvedBlocking)))} onClick={() => void download("pdf")}>确认并导出 PDF</button><button className="secondary" disabled={busy || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(unresolvedBlocking)))} onClick={() => void download("docx")}>确认并导出 Word</button></div>
             <button className="text-button" disabled={busy} onClick={() => void download("docx", true)}>先下载 Word 草稿</button>
             <p className="fine">Word 中的字体与分页可能不同；PDF 更适合固定排版。</p>
           </div>
@@ -230,6 +244,9 @@ export default function App() {
       </>}
     </main>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
+    {resolution && <ManualReview record={resolution.record} issueIndex={resolution.issueIndex} onClose={() => setResolution(null)} onSaved={row => {
+      adopt(row); setResolution(null); setStatus("已保存原文人工核对结果；处理完其他问题后可自行核对并接管");
+    }}/>}
     {history && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="版本记录"><button className="close" onClick={() => setHistory(null)} aria-label="关闭版本记录">×</button><h2>版本记录</h2><p>已保存版本保持不变，当前共 {history.length} 个版本。</p>{history.map(row => <div className="history-row" key={row.revision}><strong>v{row.revision} · {row.content.name || "未命名"}</strong><small>{new Date(row.updated_at).toLocaleString()}</small><p>{row.content.sections[0]?.items[0]?.text || "空白草稿"}</p></div>)}</section></div>}
   </div>;
 }

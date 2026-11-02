@@ -13,4 +13,8 @@ data/
 *.log
 *.pem
 id_ed25519*
+.superpowers/
+web/dist/
+build/
+dist/
 

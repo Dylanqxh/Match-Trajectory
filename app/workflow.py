@@ -77,7 +77,11 @@ class Workflow(GenerationService):
         def guarded(job, connection):
             if job["state"] != "running" or job["run_token"] != token:
                 raise StaleRun
+            before = (job["stage"], job["revisions"])
             apply(job, connection)
+            if before != (job["stage"], job["revisions"]) or job["state"] in ("ready", "waiting_input"):
+                job.setdefault("step_receipts", []).append({"step": f"{before[0]}:{before[1]}",
+                    "next_stage": job["stage"], "state": job["state"], "calls": job["calls"]})
 
         return self.jobs.mutate(job_id, guarded)
 
@@ -199,68 +203,9 @@ class Workflow(GenerationService):
             return False
         token = job["run_token"]
         try:
-            while True:
-                job = self.jobs.get(job["id"])
-                if job["state"] != "running" or job["run_token"] != token:
-                    return True
-                stage = job["stage"]
-                if stage == "review":
-                    candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
-                    checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
-                    if checks:
-                        check_payload = [i.model_dump() for i in checks]
-                        job = self._change(job["id"], token, lambda j, _, issues=check_payload: j.update(issues=issues, review=None))
-                        if not self._can_revise(job):
-                            self._finish(job, token)
-                            return True
-                        self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
-                        continue
-                review_schema = WritingReview if job["skill"].get("stage_instructions") else Review
-                schema = {"plan": Plan, "draft": Draft, "review": review_schema, "revise": Draft}[stage]
-                try:
-                    output = await self._request(job, token, schema)
-                except ModelOutputError:
-                    current = self.jobs.get(job["id"])
-                    if current.get("invalid_outputs", {}).get(f"{stage}:{current['revisions']}", 0) < 2 and current["calls"] < 8:
-                        continue
-                    raise
-                if stage == "plan":
-                    def plan_done(current, _, plan=output):
-                        current["plan"] = plan.model_dump()
-                        if plan.decision == "ask" and current["input"]["allow_questions"]:
-                            current.update(state="waiting_input", question_group=uuid.uuid4().hex, run_token="")
-                        else:
-                            current["stage"] = "draft"
+            from app.execution import run_engine
 
-                    job = self._change(job["id"], token, plan_done)
-                    if job["state"] == "waiting_input":
-                        return True
-                elif stage in ("draft", "revise"):
-                    def draft_done(current, _, draft=output, completed_stage=stage):
-                        if current["input"].get("education"):
-                            fixed = [DraftEducation(**row, fact_ids=[e["id"] for e in current["evidence"]
-                                     if e["id"].startswith(f"profile-{row['id']}-")])
-                                     for row in current["input"]["education"]]
-                            draft = Draft.model_validate({**draft.model_dump(), "education": [row.model_dump() for row in fixed]})
-                        current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
-                        if completed_stage == "revise":
-                            current["revisions"] += 1
-
-                    self._change(job["id"], token, draft_done)
-                else:
-                    candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
-                    quality = validate_quality(candidate_type.model_validate(job["draft"]))
-                    report = editorial_quality(getattr(output, "quality", None), quality, job["evidence"])
-                    review_payload = output.model_dump()
-                    if report:
-                        review_payload["quality"] = report.model_dump()
-                    all_issues = [i.model_dump() for i in [*output.issues, *quality, *quality_issues(report)]]
-                    job = self._change(job["id"], token, lambda j, _, review=review_payload, issues=all_issues: j.update(review=review, issues=issues))
-                    editorial_fix = (report and report.status == "revise") or any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
-                    if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
-                        self._finish(job, token)
-                        return True
-                    self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
+            await run_engine(self, job)
         except StaleRun:
             pass
         except (ProviderError, Conflict) as exc:
@@ -270,6 +215,66 @@ class Workflow(GenerationService):
             with suppress(StaleRun):
                 self._change(job["id"], token, lambda j, _: j.update(state="failed", error="任务处理失败，材料与已完成步骤已保留，请查看后继续。", run_token="", request_started=None))
         return True
+
+    async def execute_step(self, job, token):
+        stage = job["stage"]
+        if stage == "review":
+            candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+            checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
+            if checks:
+                check_payload = [i.model_dump() for i in checks]
+                job = self._change(job["id"], token, lambda j, _, issues=check_payload: j.update(issues=issues, review=None))
+                if not self._can_revise(job):
+                    self._finish(job, token)
+                    return True
+                self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
+                return
+        review_schema = WritingReview if job["skill"].get("stage_instructions") else Review
+        schema = {"plan": Plan, "draft": Draft, "review": review_schema, "revise": Draft}[stage]
+        try:
+            output = await self._request(job, token, schema)
+        except ModelOutputError:
+            current = self.jobs.get(job["id"])
+            if current.get("invalid_outputs", {}).get(f"{stage}:{current['revisions']}", 0) < 2 and current["calls"] < 8:
+                return
+            raise
+        if stage == "plan":
+            def plan_done(current, _, plan=output):
+                current["plan"] = plan.model_dump()
+                if plan.decision == "ask" and current["input"]["allow_questions"]:
+                    current.update(state="waiting_input", question_group=uuid.uuid4().hex, run_token="")
+                else:
+                    current["stage"] = "draft"
+
+            job = self._change(job["id"], token, plan_done)
+            if job["state"] == "waiting_input":
+                return True
+        elif stage in ("draft", "revise"):
+            def draft_done(current, _, draft=output, completed_stage=stage):
+                if current["input"].get("education"):
+                    fixed = [DraftEducation(**row, fact_ids=[e["id"] for e in current["evidence"]
+                             if e["id"].startswith(f"profile-{row['id']}-")])
+                             for row in current["input"]["education"]]
+                    draft = Draft.model_validate({**draft.model_dump(), "education": [row.model_dump() for row in fixed]})
+                current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
+                if completed_stage == "revise":
+                    current["revisions"] += 1
+
+            self._change(job["id"], token, draft_done)
+        else:
+            candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+            quality = validate_quality(candidate_type.model_validate(job["draft"]))
+            report = editorial_quality(getattr(output, "quality", None), quality, job["evidence"])
+            review_payload = output.model_dump()
+            if report:
+                review_payload["quality"] = report.model_dump()
+            all_issues = [i.model_dump() for i in [*output.issues, *quality, *quality_issues(report)]]
+            job = self._change(job["id"], token, lambda j, _, review=review_payload, issues=all_issues: j.update(review=review, issues=issues))
+            editorial_fix = (report and report.status == "revise") or any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
+            if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
+                self._finish(job, token)
+                return True
+            self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
 
     @staticmethod
     def _can_revise(job):

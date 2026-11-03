@@ -4,10 +4,26 @@ version = "0.0.1"
 description = "Development and document-runtime dependencies for Match Trajectory"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "fastapi", "uvicorn[standard]", "pydantic>=2", "sqlalchemy>=2",
-  "alembic", "httpx", "cryptography", "pypdfium2", "pillow",
-  "pytesseract", "python-docx", "playwright", "python-multipart",
-  "pyyaml", "pytest", "pytest-asyncio", "ruff", "py7zr",
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic>=2",
+  "sqlalchemy>=2",
+  "alembic",
+  "httpx",
+  "cryptography",
+  "pypdfium2",
+  "pillow",
+  "pytesseract",
+  "python-docx",
+  "playwright",
+  "python-multipart",
+  "pyyaml",
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "py7zr",
+  "langgraph>=1,<2",
+  "langgraph-checkpoint-sqlite>=3,<4",
 ]
 
 [tool.uv]

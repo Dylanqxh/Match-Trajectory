@@ -54,6 +54,8 @@ class JobStore:
                    "question_group": "", "answered": False, "answer_submission": None,
                    "framework": False, "adopted_resume_id": None, "run_token": "", "request_started": None,
                    "output_contract_version": OUTPUT_CONTRACT_VERSION,
+                   "engine": inputs.get("execution_mode", "legacy"), "engine_version": "m15-v1",
+                   "step_receipts": [],
                    "created_at": timestamp(), "updated_at": timestamp()}
             if extra:
                 job.update(extra)

@@ -197,6 +197,7 @@ class GenerationInput(StrictModel):
     education: list[Education] = Field(default_factory=list, max_length=8)
     career_stage: Literal["unspecified", "entry", "experienced", "transition"] = "unspecified"
     has_career_gap: bool = False
+    execution_mode: Literal["legacy", "langgraph", "supervisor"] = "langgraph"
 
 
 class AnswerInput(StrictModel):

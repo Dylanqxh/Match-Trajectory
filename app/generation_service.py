@@ -39,6 +39,8 @@ class GenerationService:
         pass
 
     def submit(self, inputs: GenerationInput):
+        if inputs.source_text and inputs.execution_mode == "supervisor" and not self.registry.supports_tools(self.registry.current):
+            raise ValueError("请先在模型连接中测试工具调用能力，再启用智能修正策略")
         if inputs.source_text and not inputs.send_materials:
             raise ValueError("请先确认将材料发送给所选模型服务")
         if inputs.source_text and (not inputs.name or not inputs.contact):
@@ -97,6 +99,8 @@ class GenerationService:
         def apply(job, _):
             if job["state"] not in ("failed", "interrupted"):
                 raise Conflict("只有失败或中断的任务可以继续")
+            if job.get("engine") == "supervisor" and not self.registry.supports_tools(self.registry.current):
+                raise Conflict("请先为当前模型重新测试工具调用能力；任务引擎和已用预算保留")
             if self.registry.describe(config) != job["provider"]:
                 raise Conflict("请连接原任务相同的供应商、地址和模型后继续；切换目标模型请新建任务")
             continuation = self.continuation(job)

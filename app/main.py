@@ -200,6 +200,26 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         app.state.provider, app.state.provider_key = result, body.api_key
         return result
 
+    @app.post("/api/model-settings/test-tools")
+    async def test_model_tools():
+        from app.supervisor import probe_context
+
+        if workflow.execution_lock.locked():
+            raise ValueError("当前有任务正在执行，请结束后再测试工具调用")
+        revision = registry.current
+        config = registry.get(revision)
+        async with workflow.execution_lock:
+            try:
+                async with asyncio.timeout(20):
+                    result = await workflow.client.delegate(config, probe_context())
+            except TimeoutError:
+                raise providers.ProviderError("工具测试超时，可能已计费；未启用智能修正策略") from None
+        if result.value.action != "revise" or result.value.issue_indices != [0]:
+            raise ValueError("工具测试未按合成任务执行，未启用智能修正策略")
+        registry.verify_tools(revision)
+        return {"verified": True, "config_revision": revision, "calls": 1, "usage": result.usage,
+                "message": "合成工具调用测试通过；仅验证委派能力，不代表简历质量已验证"}
+
     @app.get("/api/generation-jobs")
     def list_generation_jobs():
         return jobs.list()

@@ -86,6 +86,10 @@ class Workflow(GenerationService):
         return self.jobs.mutate(job_id, guarded)
 
     def _context(self, job, stage):
+        if stage == "supervise":
+            from app.supervisor import supervisor_context
+
+            return supervisor_context(job)
         context = {"instructions": job["skill"].get("stage_instructions", {}).get(stage, job["skill"]["instructions"]), "target_role": job["input"]["target_role"],
                    "reference_date": job["created_at"][:10], "reference_timezone": "UTC",
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
@@ -103,6 +107,12 @@ class Workflow(GenerationService):
             context["candidate"] = job["draft"]
         if stage == "revise":
             context["issues_to_fix"] = job["issues"]
+            if job.get("repair_decision"):
+                from app.supervisor import allowed_change_ids
+
+                context["issues_to_fix"] = [job["issues"][i] for i in job["repair_decision"]["issue_indices"]]
+                context["allowed_change_ids"] = sorted(allowed_change_ids(job))
+                context["instructions"] += "\n仅修改allowed_change_ids范围；其余字段、段落及标识原样保留。document代表整篇。"
         if job.get("feedback_key") == f"{stage}:{job['revisions']}" and job.get("last_diagnostic"):
             context["validation_feedback"] = job["last_diagnostic"]
         return context
@@ -126,10 +136,24 @@ class Workflow(GenerationService):
         error = None
         value = None
         try:
-            async with asyncio.timeout(min(45, (180000 - job["elapsed_ms"]) / 1000)):
-                task = asyncio.create_task(self.client.complete(config, stage, self._context(job, stage), schema))
+            remaining = (180000 - job["elapsed_ms"]) / 1000
+            timeout = min(20, max(1, remaining - 30)) if stage == "supervise" else min(45, remaining)
+            if stage == "revise" and job.get("repair_decision"):
+                timeout = min(timeout, max(1, remaining - 15))
+            async with asyncio.timeout(timeout):
+                context = self._context(job, stage)
+                call = self.client.delegate(config, context) if stage == "supervise" else self.client.complete(config, stage, context, schema)
+                task = asyncio.create_task(call)
                 self._active = (job["id"], task)
                 value = await task
+            if stage == "supervise":
+                from app.supervisor import validate_decision
+
+                validate_decision(job, value.value)
+            if stage == "revise" and job.get("repair_decision"):
+                from app.supervisor import validate_revision_scope
+
+                validate_revision_scope(job, value.value)
             if isinstance(value.value, Plan) and any(ref not in {e["id"] for e in job["evidence"]} for ref in value.value.selected_fact_ids):
                 raise ModelOutputError("选材引用不存在，不能继续起草")
             if isinstance(value.value, Review):
@@ -218,6 +242,25 @@ class Workflow(GenerationService):
 
     async def execute_step(self, job, token):
         stage = job["stage"]
+        if stage == "supervise":
+            from app.supervisor import RepairDecision
+
+            if job["calls"] > 5 or job["elapsed_ms"] >= 140000:
+                self._change(job["id"], token, lambda j, _: j.update(stop_reason="剩余预算不足以安排主管、修正和审阅，已保留当前候选与问题"))
+                self._finish(job, token)
+                return
+            try:
+                result = await self._request(job, token, RepairDecision)
+            except ModelOutputError:
+                current = self.jobs.get(job["id"])
+                if current.get("invalid_outputs", {}).get(f"supervise:{current['revisions']}", 0) < 2 and current["calls"] <= 5:
+                    return
+                raise
+            if result.action == "deliver":
+                self._finish(job, token)
+            else:
+                self._change(job["id"], token, lambda j, _: j.update(stage="revise", repair_decision=result.model_dump()))
+            return
         if stage == "review":
             candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
             checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
@@ -257,6 +300,7 @@ class Workflow(GenerationService):
                              for row in current["input"]["education"]]
                     draft = Draft.model_validate({**draft.model_dump(), "education": [row.model_dump() for row in fixed]})
                 current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
+                current.pop("repair_decision", None)
                 if completed_stage == "revise":
                     current["revisions"] += 1
 
@@ -274,7 +318,10 @@ class Workflow(GenerationService):
             if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
                 self._finish(job, token)
                 return True
-            self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
+            from app.supervisor import should_supervise
+
+            next_stage = "supervise" if should_supervise(job) else "revise"
+            self._change(job["id"], token, lambda j, _: j.update(stage=next_stage))
 
     @staticmethod
     def _can_revise(job):

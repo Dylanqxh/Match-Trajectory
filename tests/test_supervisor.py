@@ -3,11 +3,11 @@ import json
 
 import httpx
 import pytest
+from test_model_client import config
+from test_workflow import DRAFT, PASS, PLAN, request, setup
 
 from app.model_client import Completion, ModelClient
 from app.providers import ProviderError
-from test_model_client import config
-from test_workflow import DRAFT, PASS, PLAN, request, setup
 
 
 def two_issues():
@@ -145,6 +145,7 @@ def test_supervisor_revision_cannot_rewrite_an_unselected_item(tmp_path):
 
 def test_capability_probe_is_explicit_and_bound_to_model_revision(tmp_path):
     from fastapi.testclient import TestClient
+
     from app.main import create_app
     from app.supervisor import RepairDecision
 
@@ -175,3 +176,77 @@ def test_resumed_supervisor_with_insufficient_budget_keeps_candidate_without_cal
     result = jobs.get(job['id'])
     assert result['state'] == 'ready' and result['calls'] == 6
     assert wrapped.delegations == [] and result['draft']
+
+
+def test_revision_structure_retry_does_not_spend_reserved_review_call(tmp_path):
+    from app.model_client import ModelOutputError
+    runner, jobs, _, _, _, wrapped = enabled(tmp_path, [two_issues(), ModelOutputError('invalid structure'), DRAFT])
+    job = runner.submit(request(execution_mode='supervisor'))
+    jobs.mutate(job['id'], lambda j, _: j.update(stage='review', calls=4, plan=PLAN, draft=DRAFT))
+    asyncio.run(runner.run_one())
+    result = jobs.get(job['id'])
+    assert result['state'] == 'failed' and result['calls'] == 7
+    assert len(wrapped.delegations) == 1
+
+
+def test_probe_releases_queue_even_when_submission_woke_worker_while_locked(tmp_path):
+    from test_workflow import ScriptedModel
+
+    from app.main import create_app
+    from app.supervisor import RepairDecision
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+        class Probe(ScriptedModel):
+            async def delegate(self, config, context):
+                entered.set()
+                await release.wait()
+                return Completion(RepairDecision(action='revise', issue_indices=[0], rationale='测试'), {})
+        app = create_app(tmp_path, model_client=Probe([PLAN, DRAFT, PASS]))
+        runner = app.state.workflow
+        runner.registry.register(config())
+        await runner.start()
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1') as client:
+                await client.get('/api/session')
+                probing = asyncio.create_task(client.post('/api/model-settings/test-tools'))
+                await entered.wait()
+                job = runner.submit(request())
+                await asyncio.sleep(0.05)
+                release.set()
+                assert (await probing).status_code == 200
+                for _ in range(100):
+                    if runner.jobs.get(job['id'])['state'] == 'ready':
+                        break
+                    await asyncio.sleep(0.01)
+                assert runner.jobs.get(job['id'])['state'] == 'ready'
+        finally:
+            await runner.close()
+    asyncio.run(scenario())
+
+
+def test_local_revision_cannot_move_contributions_between_experiences():
+    from app.generation_models import Draft
+    from app.supervisor import validate_revision_scope
+
+    before = json.loads(json.dumps(DRAFT))
+    before['sections'].append({'id': 'other-project', 'title': '另一段项目经历', 'items': [
+        {'id': 'untouched', 'text': '编写测试记录。', 'fact_ids': ['e1']}]})
+    after = json.loads(json.dumps(before))
+    after['sections'][0]['items'], after['sections'][1]['items'] = after['sections'][1]['items'], after['sections'][0]['items']
+    job = {'draft': before, 'issues': [{'item_id': 'item1'}], 'repair_decision': {'issue_indices': [0]}}
+    with pytest.raises(ProviderError):
+        validate_revision_scope(job, Draft.model_validate(after))
+
+
+def test_need_input_semantics_override_rewrite_words_in_the_reason():
+    from app.generation_models import QualityReview
+    from app.supervisor import RepairDecision, eligible_issues, validate_decision
+    from app.writing_quality import quality_issues
+
+    report = two_issues()['quality']
+    report['dimensions'][0].update(action='need_input', evidence_ids=[], reason='缺少另一项目交付信息，无法合并成完整贡献。')
+    job = {'issues': [i.model_dump() for i in quality_issues(QualityReview.model_validate(report))]}
+    assert eligible_issues(job) == [1]
+    with pytest.raises(ProviderError):
+        validate_decision(job, RepairDecision(action='revise', issue_indices=[0], rationale='不能靠合并补事实'))

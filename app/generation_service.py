@@ -124,6 +124,8 @@ class GenerationService:
             return {"allowed": False, "reason": "该任务已使用 8 次模型调用，材料与候选保留；请新建任务"}
         if job["elapsed_ms"] >= 180000:
             return {"allowed": False, "reason": "该任务累计执行达到 180 秒，材料与候选保留；请新建任务"}
+        if job["stage"] in ("draft", "revise") and (job["calls"] >= 7 or job["elapsed_ms"] >= 165000):
+            return {"allowed": False, "reason": "剩余预算不足以生成并审阅新正文；已有候选保留，请新建任务或手工核对"}
         key = f"{job['stage']}:{job['revisions']}"
         if job.get("invalid_outputs", {}).get(key, 0) >= 2 and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
             return {"allowed": False, "reason": f"当前阶段连续两次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/8 次）。请查看诊断；新建任务前先确认问题已处理。"}

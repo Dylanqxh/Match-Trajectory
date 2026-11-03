@@ -2,9 +2,9 @@ import asyncio
 import sqlite3
 
 import pytest
+from test_workflow import DRAFT, PASS, PLAN, request, setup
 
 from app.providers import ProviderError
-from test_workflow import DRAFT, PASS, PLAN, request, setup
 
 
 @pytest.mark.parametrize('engine', ['legacy', 'langgraph'])
@@ -101,3 +101,48 @@ def test_graph_provider_failure_continues_only_failed_step(tmp_path):
     result = jobs.get(job['id'])
     assert result['state'] == 'ready' and result['calls'] == 4
     assert [c[0] for c in model.calls] == ['plan', 'draft', 'draft', 'review']
+
+
+def test_retry_of_pre_upgrade_request_returns_existing_job_without_changing_engine(tmp_path):
+    from app.skill import build_evidence, load_skill
+    runner, jobs, _, registry, model = setup(tmp_path, [])
+    inputs = request().model_dump(exclude={'execution_mode'})
+    old = jobs.create(inputs, registry.current, registry.describe(registry.get(registry.current)),
+                      load_skill(inputs['target_role']), [e.model_dump() for e in build_evidence(inputs['source_text'])])
+    repeated = runner.submit(request())
+    assert repeated['id'] == old['id'] and repeated['engine'] == 'legacy'
+    assert model.calls == []
+
+
+def test_review_commit_and_next_stage_are_atomic_across_crash(tmp_path, monkeypatch):
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
+    job = runner.submit(request(execution_mode='langgraph'))
+    original = jobs.mutate
+    crashed = False
+    def crash_after_review(job_id, callback):
+        nonlocal crashed
+        result = original(job_id, callback)
+        if result['review'] and not crashed:
+            crashed = True
+            raise OSError('simulated crash immediately after review commit')
+        return result
+    monkeypatch.setattr(jobs, 'mutate', crash_after_review)
+    asyncio.run(runner.run_one())
+    if jobs.get(job['id'])['state'] != 'ready':
+        runner.resume(job['id'])
+        asyncio.run(runner.run_one())
+    result = jobs.get(job['id'])
+    assert crashed and result['state'] == 'ready'
+    assert result['calls'] == 3
+    assert [c[0] for c in model.calls] == ['plan', 'draft', 'review']
+
+
+def test_unexpected_exception_does_not_persist_raw_provider_or_material_text_in_checkpoint(tmp_path):
+    marker = 'private-raw-response-must-not-be-in-checkpoint'
+    runner, jobs, _, _, _ = setup(tmp_path, [PLAN, RuntimeError(marker)])
+    job = runner.submit(request(execution_mode='langgraph'))
+    asyncio.run(runner.run_one())
+    result = jobs.get(job['id'])
+    assert result['state'] == 'failed'
+    assert marker not in result['error']
+    assert marker.encode() not in (tmp_path / 'workflow-checkpoints.sqlite3').read_bytes()

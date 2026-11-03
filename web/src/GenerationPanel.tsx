@@ -3,7 +3,7 @@ import { api, GenerationJob, Resume } from "./api";
 import { ResumeText } from "./ResumeText";
 import { QualityReport } from "./QualityReport";
 
-const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达" };
+const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达", supervise: "安排本轮修正重点" };
 const states: Record<string, string> = { queued: "等待执行", running: "正在处理", waiting_input: "补充一点信息", ready: "候选已保存", failed: "本次处理未完成", interrupted: "任务已中断", cancelled: "已取消" };
 
 export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinished }: {
@@ -49,6 +49,7 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
     {job && <>
       <div className="generation-state"><strong>{states[job.state] || job.state}</strong><span>{job.input.target_role} · {stages[job.stage]}</span></div>
       {job.error && <p className="notice">{job.error}</p>}
+      {job.stop_reason && <p className="notice">{job.stop_reason}</p>}
       {job.service_warning && <p className="notice">{job.service_warning}</p>}
       {job.framework && <p>目前只有目标，没有可用于起草的个人事实。可以先采用空框架，或补充一段真实材料后重新生成。</p>}
       {job.state === "waiting_input" && <div className="questions"><p>最多补问这一轮；想先看一版，可以直接跳过。</p>
@@ -75,6 +76,7 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       {["failed", "interrupted"].includes(job.state) && job.continuation && <p className="fine">{job.continuation.reason}</p>}
       <details className="generation-details"><summary>查看材料依据与执行记录</summary>
         <p>模型请求 {job.calls} / 8 次；内容修正 {job.revisions} / 2 轮。费用以模型供应商账单为准。</p>
+        <p>生成方式：{job.engine === "supervisor" ? "智能修正策略（试用）" : job.engine === "langgraph" ? "分阶段生成" : "兼容流程"}；已保存步骤 {job.step_receipts?.length || 0}。主管请求也计入总次数。</p>
         <p>引用只表示使用了对应用户陈述，不表示系统已客观核实。</p>
         {job.last_diagnostic && <div><strong>上次输出诊断：{({ schema: "字段结构不符合约定", invalid_json: "JSON 格式不完整", empty: "模型返回空白", truncated: "模型输出被截断", incomplete: "模型未完整输出", response_envelope: "响应封装异常", structure: "结构或引用检查未通过" } as Record<string, string>)[job.last_diagnostic.category] || "输出检查未通过"}</strong>
           {job.last_diagnostic.fields.map((field, index) => <p key={index}>{field.path} · {field.rule ? ({ unique_ids: "段落标识重复", body_length: "正文超过长度限制", summary_id: "简介标识不符合约定", review_verdict: "审阅结论与问题列表不一致", question_decision: "补问决策与问题列表不一致", unique_question_ids: "问题标识重复", quality_status: "质量结论与改进动作不一致", quality_dimensions: "质量维度不完整或重复", quality_evidence: "质量意见缺少定位依据", quality_score: "质量评分与动作不一致" } as Record<string, string>)[field.rule] || field.type : field.type}</p>)}</div>}

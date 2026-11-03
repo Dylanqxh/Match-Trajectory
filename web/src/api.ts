@@ -18,6 +18,8 @@ export function unresolvedBlocking(issue: GenerationIssue): boolean {
 }
 export interface GenerationSummary { id: string; state: string; stage: string; target_role: string; mode: string; adopted_resume_id: string | null }
 export interface GenerationJob extends GenerationSummary {
+  engine?: string; engine_version?: string; stop_reason?: string;
+  step_receipts?: { step: string; next_stage: string; state: string; calls: number }[];
   continuation?: { allowed: boolean; reason: string };
   last_diagnostic?: { category: string; fields: { path: string; type: string; rule?: string }[]; finish_reason?: string };
   service_warning?: string;

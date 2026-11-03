@@ -24,8 +24,10 @@ class RepairDecision(StrictModel):
 
 def eligible_issues(job):
     return [index for index, issue in enumerate(job["issues"])
-            if issue["severity"] == "blocking" or issue.get("suggestion") == "依据已有原文修正表达"
-            or any(word in issue["message"] for word in ("压缩", "合并", "重复"))]
+            if issue.get("repair_action") != "need_input"
+            and issue.get("suggestion") != "材料缺口可后续补充，不能补造个人事实"
+            and (issue["severity"] == "blocking" or issue.get("repair_action") == "revise"
+                 or issue.get("suggestion") == "依据已有原文修正表达")]
 
 
 def should_supervise(job):
@@ -60,9 +62,20 @@ def validate_revision_scope(job, draft):
             rows[section.id] = section.model_dump(exclude={"items"})
             rows.update({item.id: item.model_dump() for item in section.items})
         return rows
-    before, after = blocks(Draft.model_validate(job["draft"])), blocks(draft)
+    original = Draft.model_validate(job["draft"])
+    before, after = blocks(original), blocks(draft)
     if any(before.get(key) != after.get(key) for key in before.keys() | after.keys() if key not in allowed):
         raise ModelOutputError("局部修正改动了未授权段落，原候选保留，请仅修改指定范围")
+    def parents(value):
+        return {item.id: section.id for section in value.sections for item in section.items}
+    old_parents, new_parents = parents(original), parents(draft)
+    if any(old_parents[key] != new_parents[key] for key in old_parents.keys() & new_parents.keys()):
+        raise ModelOutputError("局部修正改变了条目的经历归属，原候选保留")
+    def order(value):
+        return [(section.id, [item.id for item in section.items if item.id not in allowed])
+                for section in value.sections if section.id not in allowed]
+    if order(original) != order(draft):
+        raise ModelOutputError("局部修正改变了未授权经历或条目的顺序，原候选保留")
 
 
 def supervisor_context(job):

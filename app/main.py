@@ -103,11 +103,11 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "milestone": "m1", "ai_generation": True, "worker_warning": workflow.service_warning}
+        return {"status": "ok", "milestone": "m1.5", "ai_generation": True, "worker_warning": workflow.service_warning}
 
     @app.get("/api/session")
     def initialize_session():
-        response = JSONResponse({"status": "ready", "milestone": "m1"})
+        response = JSONResponse({"status": "ready", "milestone": "m1.5"})
         response.set_cookie("mt_session", session, httponly=True, samesite="strict", path="/")
         return response
 
@@ -187,7 +187,8 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/api/model-settings")
     def model_settings():
-        return app.state.provider or {"configured": False, "resume_generation_verified": False}
+        return {**(app.state.provider or {"configured": False, "resume_generation_verified": False}),
+                "tool_calls_verified": registry.supports_tools(registry.current)}
 
     @app.get("/api/model-presets")
     def model_presets():
@@ -208,12 +209,15 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
             raise ValueError("当前有任务正在执行，请结束后再测试工具调用")
         revision = registry.current
         config = registry.get(revision)
-        async with workflow.execution_lock:
-            try:
-                async with asyncio.timeout(20):
-                    result = await workflow.client.delegate(config, probe_context())
-            except TimeoutError:
-                raise providers.ProviderError("工具测试超时，可能已计费；未启用智能修正策略") from None
+        try:
+            async with workflow.execution_lock:
+                try:
+                    async with asyncio.timeout(20):
+                        result = await workflow.client.delegate(config, probe_context())
+                except TimeoutError:
+                    raise providers.ProviderError("工具测试超时，可能已计费；未启用智能修正策略") from None
+        finally:
+            workflow.wake()
         if result.value.action != "revise" or result.value.issue_indices != [0]:
             raise ValueError("工具测试未按合成任务执行，未启用智能修正策略")
         registry.verify_tools(revision)

@@ -22,6 +22,7 @@ export default function App() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<GenerationSummary[]>([]);
   const [modelStatus, setModelStatus] = useState("尚未连接模型");
+  const [useSupervisor, setUseSupervisor] = useState(false);
   const generationRequest = useRef<{ key: string; id: string } | null>(null);
   const savedInput = useRef("");
   const [dirty, setDirty] = useState(false);
@@ -105,7 +106,8 @@ export default function App() {
       if (!content.name.trim() || !content.contact.trim() || !content.target_role.trim()) throw new Error("请先填写姓名、联系方式和目标岗位");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
       const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
-        education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap, allow_questions: allowQuestions, send_materials: sendMaterials };
+        education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap,
+        execution_mode: useSupervisor ? "supervisor" : "langgraph", allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
       if (generationRequest.current?.key !== key) generationRequest.current = { key, id: crypto.randomUUID() };
       const job = await api<GenerationJob>("/api/generation-jobs", { ...payload, request_id: generationRequest.current.id });
@@ -172,11 +174,11 @@ export default function App() {
       {jobs.length > 0 && <><div className="nav-heading">生成任务</div><nav aria-label="生成任务">{jobs.slice(0, 6).map(job => <button className={`resume-link ${jobId === job.id ? "active" : ""}`} key={job.id}
         onClick={() => showJob(job.id)}><span>{job.target_role}</span><small>{({ queued: "等待执行", running: "正在生成", waiting_input: "等待补充", ready: "已有结果", failed: "可查看或继续", interrupted: "已中断", cancelled: "已取消" } as Record<string, string>)[job.state]}</small></button>)}</nav></>}
       <div className="sidebar-bottom"><button disabled={busy} onClick={() => setSettings(true)}>⚙ 模型连接</button>
-        <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1 · AI 生成与核对交付</small></div></div>
+        <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.5 · AI 生成与核对交付</small></div></div>
     </aside>
     <main className="main-area" inert={resolution ? true : undefined}>
       <header className="topbar"><div><span className="eyebrow">RESUME WORKSPACE</span><h1>简历工作台</h1></div>
-        <span className="stage-chip">生成与交付 · M1</span></header>
+        <span className="stage-chip">生成与交付 · M1.5</span></header>
       <div className="feedback" role="status">{busy ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
       {jobId && <GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
@@ -204,6 +206,10 @@ export default function App() {
           <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
           <details><summary>有具体岗位 JD？可选填写</summary><label>岗位 JD<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)}/></label></details>
           <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
+          <details><summary>生成选项</summary>
+            <label className="checkbox-label"><input type="checkbox" checked={useSupervisor} onChange={e => setUseSupervisor(e.target.checked)}/>启用智能修正策略（试用）</label>
+            <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
+          </details>
           <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
           <p className="fine">姓名和联系方式单独留在本机；教育信息和所选求职背景会作为材料发送。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
           <button className="primary full" type="submit">AI 生成简历</button>

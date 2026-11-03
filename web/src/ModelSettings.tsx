@@ -15,9 +15,11 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [connected, setConnected] = useState(false);
   useEffect(() => {
     void api<{ configured: boolean; provider?: Choice; model?: string; base_url?: string }>("/api/model-settings").then(row => {
       if (row.configured && row.provider && row.provider in choices) {
+        setConnected(true);
         setProvider(row.provider); setModel(row.model || ""); setBaseUrl(row.base_url || "");
         setMessage(`本次服务已连接 ${row.model}；更换配置时请重新填写 Key 并测试。`);
       }
@@ -29,8 +31,16 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
       const result = await api<{ message: string }>("/api/model-settings/test", {
         provider, model, api_key: key, base_url: provider === "custom" ? baseUrl : "",
       });
-      setKey(""); setMessage(result.message + "。Key 仅保留在本次服务会话中。");
+      setKey(""); setConnected(true); setMessage(result.message + "。Key 仅保留在本次服务会话中。");
       onSaved?.();
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function testTools() {
+    setBusy(true); setMessage("");
+    try {
+      const result = await api<{ message: string }>("/api/model-settings/test-tools", {});
+      setMessage(result.message); onSaved?.();
     } catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
   }
@@ -47,6 +57,10 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
       <label>API Key<input aria-label="API Key" type="password" autoComplete="new-password" value={key} onChange={e => setKey(e.target.value)} placeholder="粘贴你在供应商取得的 Key"/></label>
       <details><summary>高级：模型名称</summary><label>模型 ID<input aria-label="模型 ID" value={model} onChange={e => setModel(e.target.value)}/></label></details>
       <button className="primary" onClick={test} disabled={!key || !model}>{busy ? "正在测试…" : "测试并保存到会话"}</button>
+      <details><summary>可选：智能修正策略</summary>
+        <p className="fine">测试当前已保存模型的工具调用，不发送个人材料。额外发出1次模型请求，可能计费；重新连接后需重新测试。默认生成无需此测试。</p>
+        <button className="secondary" onClick={testTools} disabled={!connected}>测试工具调用（1次模型请求）</button>
+      </details>
     </fieldset>
     {message && <p role="status" className="notice">{message}</p>}
     <p className="fine">供应商可能要求注册、开通和付费；预设尚未完成真实凭据与全流程验证。</p>

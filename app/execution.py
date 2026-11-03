@@ -40,16 +40,25 @@ async def run_graph(workflow, job):
     from langgraph.graph import END, START, StateGraph
     from langgraph.types import Command, interrupt
 
+    from app.workflow import StaleRun
+
     def current():
         return workflow.jobs.get(job["id"])
 
     async def step(state):
         value = current()
-        if value["state"] == "running" and value["run_token"] == job["run_token"]:
-            # A successful business commit may lead the last checkpoint. Reconcile
-            # its stage/revision first, rather than repeating the saved operation.
-            if state["step_key"] == projection(value)["step_key"]:
+        # A successful business commit may lead the last checkpoint. Reconcile
+        # its stage/revision first, rather than repeating the saved operation.
+        if (value["state"] == "running" and value["run_token"] == job["run_token"]
+                and state["step_key"] == projection(value)["step_key"]):
+            try:
                 await workflow.execute_step(value, job["run_token"])
+            except (ProviderError, StaleRun):
+                raise
+            except Exception:  # noqa: BLE001 -- sanitize unexpected errors before the framework persists them.
+                # LangGraph persists node exceptions. Prevent database/SDK errors
+                # from serializing raw material or remote response bodies there.
+                raise ProviderError("执行步骤异常，材料与已保存结果保留；请检查本机存储或稍后继续") from None
         return projection(current())
 
     def route(state):

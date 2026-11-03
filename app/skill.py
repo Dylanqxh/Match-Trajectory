@@ -120,15 +120,15 @@ def validate_quality(draft: Draft) -> list[Issue]:
     """Editorial warnings; never use length alone as evidence of false facts."""
     issues = []
 
-    def warn(item_id, message):
-        issues.append(Issue(item_id=item_id, severity="warning", code="quality", message=message))
+    def warn(item_id, message, action="revise"):
+        issues.append(Issue(item_id=item_id, severity="warning", code="quality", message=message, repair_action=action))
 
     if draft.summary and len(draft.summary.text) > 100:
         warn("__summary", "简介偏长，请压缩为1—2句，仅保留目标相关的背景与证据，删除求职意愿和自我评价。")
     for section in draft.sections:
         if section.kind in ("project", "work", "research"):
             if not section.start_date and not section.end_date:
-                warn(section.id, "这段经历缺少时间；请在编辑器补充已知日期，未知时留空，不得推测。")
+                warn(section.id, "这段经历缺少时间；请在编辑器补充已知日期，未知时留空，不得推测。", "need_input")
             if len(section.items) > 4:
                 warn(section.id, "单段经历条目偏多，请合并重复内容，优先保留2—4项核心贡献。")
         seen = set()

@@ -125,6 +125,8 @@ class Workflow(GenerationService):
         def reserve(current, _):
             if current["calls"] >= 8 or current["elapsed_ms"] >= 180000:
                 raise ProviderError("任务预算已用尽，已有材料和候选已保留；请查看候选或新建任务")
+            if stage in ("draft", "revise") and (current["calls"] >= 7 or current["elapsed_ms"] >= 165000):
+                raise ProviderError("剩余预算需保留给审阅，不能继续生成未经审阅的新正文；已有候选保留")
             if current.get("invalid_outputs", {}).get(key, 0) >= 2:
                 raise ProviderError("这个阶段的结构重试已用尽，已有内容已保留")
             current["calls"] += 1
@@ -138,7 +140,7 @@ class Workflow(GenerationService):
         try:
             remaining = (180000 - job["elapsed_ms"]) / 1000
             timeout = min(20, max(1, remaining - 30)) if stage == "supervise" else min(45, remaining)
-            if stage == "revise" and job.get("repair_decision"):
+            if stage in ("draft", "revise"):
                 timeout = min(timeout, max(1, remaining - 15))
             async with asyncio.timeout(timeout):
                 context = self._context(job, stage)
@@ -199,21 +201,21 @@ class Workflow(GenerationService):
         return value.value
 
     def _finish(self, job, token):
-        def apply(current, connection):
-            if current["mode"] == "recheck":
-                resume_id = current["input"]["review_resume_id"]
-                record = self.store._read(connection, resume_id)
-                if record.revision != current["input"]["base_revision"] or resume_hash(record.content) != current["target_hash"]:
-                    raise Conflict("简历已在审阅期间变化，旧结论没有覆盖当前内容；请重新审阅")
-                status = "passed" if current["review"] and current["review"]["verdict"] == "pass" and not any(
-                    i["severity"] == "blocking" for i in current["issues"]) else "blocked"
-                info = record.ai.model_copy(update={"review_job_id": current["id"], "review_status": status,
-                                                    "content_hash": resume_hash(record.content), "issues": current["issues"],
-                                                    "manual_takeover": False, "quality": current["review"].get("quality") if current["review"] else None})
-                self.store.write_ai(connection, resume_id, record.revision, info)
-            current.update(state="ready", run_token="", error="")
+        return self._change(job["id"], token, self._finish_state)
 
-        return self._change(job["id"], token, apply)
+    def _finish_state(self, current, connection):
+        if current["mode"] == "recheck":
+            resume_id = current["input"]["review_resume_id"]
+            record = self.store._read(connection, resume_id)
+            if record.revision != current["input"]["base_revision"] or resume_hash(record.content) != current["target_hash"]:
+                raise Conflict("简历已在审阅期间变化，旧结论没有覆盖当前内容；请重新审阅")
+            status = "passed" if current["review"] and current["review"]["verdict"] == "pass" and not any(
+                i["severity"] == "blocking" for i in current["issues"]) else "blocked"
+            info = record.ai.model_copy(update={"review_job_id": current["id"], "review_status": status,
+                                                "content_hash": resume_hash(record.content), "issues": current["issues"],
+                                                "manual_takeover": False, "quality": current["review"].get("quality") if current["review"] else None})
+            self.store.write_ai(connection, resume_id, record.revision, info)
+        current.update(state="ready", run_token="", error="")
 
     async def run_one(self):
         if self.execution_lock.locked():
@@ -313,15 +315,18 @@ class Workflow(GenerationService):
             if report:
                 review_payload["quality"] = report.model_dump()
             all_issues = [i.model_dump() for i in [*output.issues, *quality, *quality_issues(report)]]
-            job = self._change(job["id"], token, lambda j, _, review=review_payload, issues=all_issues: j.update(review=review, issues=issues))
             editorial_fix = (report and report.status == "revise") or any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
-            if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(job):
-                self._finish(job, token)
-                return True
-            from app.supervisor import should_supervise
 
-            next_stage = "supervise" if should_supervise(job) else "revise"
-            self._change(job["id"], token, lambda j, _: j.update(stage=next_stage))
+            def review_done(current, connection):
+                from app.supervisor import should_supervise
+
+                current.update(review=review_payload, issues=all_issues)
+                if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(current):
+                    self._finish_state(current, connection)
+                else:
+                    current["stage"] = "supervise" if should_supervise(current) else "revise"
+
+            self._change(job["id"], token, review_done)
 
     @staticmethod
     def _can_revise(job):

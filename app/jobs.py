@@ -42,9 +42,16 @@ class JobStore:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             existing = connection.execute(select(job_rows).where(job_rows.c.request_id == inputs["request_id"])).mappings().first()
             if existing:
+                saved = json.loads(existing["data"])
                 if existing["input_hash"] != digest:
-                    raise Conflict("相同请求标识对应不同内容，请重新发起任务")
-                return json.loads(existing["data"])
+                    # Old callers retry the same request after an additive API
+                    # default was introduced. Keep its original pinned engine.
+                    additive_default = ("execution_mode" not in saved["input"]
+                                        and inputs.get("execution_mode") == "langgraph"
+                                        and fingerprint({k: v for k, v in inputs.items() if k != "execution_mode"}) == existing["input_hash"])
+                    if not additive_default:
+                        raise Conflict("相同请求标识对应不同内容，请重新发起任务")
+                return saved
             job = {"id": uuid.uuid4().hex, "input": inputs, "config_revision": config_revision, "provider": provider,
                    "skill": {"role": skill.role, "version": skill.version, "instructions": skill.instructions,
                              "resources": skill.resources, "stage_resources": skill.stage_resources, "stage_instructions": skill.stage_instructions},

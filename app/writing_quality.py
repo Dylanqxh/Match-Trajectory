@@ -22,6 +22,7 @@ def quality_issues(report):
         return []
     return [Issue(item_id=row.item_ids[0] if row.item_ids else "document", severity="warning",
                   code="fit" if row.dimension == "fit" else "quality",
+            repair_action=row.action,
                   message=f"{LABELS[row.dimension]}：{row.reason}",
                   suggestion="依据已有原文修正表达" if row.action == "revise" else "材料缺口可后续补充，不能补造个人事实")
             for row in report.dimensions if row.action in ("revise", "need_input")]

@@ -17,6 +17,17 @@ class Handler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(size))
         system = payload["messages"][0]["content"] if len(payload["messages"]) > 1 else ""
         context = json.loads(payload["messages"][1]["content"]) if system else {}
+        if payload.get("tools"):
+            data = json.dumps({"choices": [{"finish_reason": "tool_calls", "message": {"content": None,
+                "tool_calls": [{"id": "fixture-call", "type": "function", "function": {"name": "delegate_to_writer",
+                    "arguments": json.dumps({"action": "revise", "issue_indices": [0], "rationale": "本地协议测试，非真实模型决策"})}}]}}],
+                "usage": {"total_tokens": 10}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if not system:
             output = {"ok": True}
         elif "当前阶段：plan" in system:
@@ -29,6 +40,9 @@ class Handler(BaseHTTPRequestHandler):
                 output = {"verdict": "blocked", "issues": [{"item_id": "item1", "severity": "blocking", "code": "unsupported", "message": "测试问题：请核对本人动作是否有原文支持"}]}
             else:
                 output = {"verdict": "pass", "issues": [], "strengths": ["本地协议测试，非真实模型评价"]}
+        elif "当前阶段：revise" in system and "主管测试场景" in context["evidence"][0]["text"]:
+            output = {"sections": [{"id": "projects", "title": "项目经历", "items": [
+                {"id": "item1", "text": "使用 Python 完成检索实验，保留评估脚本和对照记录。", "fact_ids": ["e1"]}]}]}
         elif "结构化样例" in context["evidence"][0]["text"]:
             output = {"sections": [
                 {"id": "old-project", "kind": "project", "title": "早期查询项目", "start_date": "2023-01", "end_date": "2023-06", "fact_ids": ["e1"],
@@ -44,6 +58,10 @@ class Handler(BaseHTTPRequestHandler):
             output["quality"] = {"status": "ready", "dimensions": [
                 {"dimension": name, "score": 2, "reason": "本地协议测试固定结构，不代表真实写作质量。", "item_ids": ["document"], "evidence_ids": ["e1"], "action": "keep"}
                 for name in ("fit", "contribution", "evidence", "readability")], "interview_topics": []}
+            if "主管测试场景" in context.get("candidate", {}).get("sections", [{}])[0].get("items", [{}])[0].get("text", ""):
+                output["quality"]["status"] = "revise"
+                for row in output["quality"]["dimensions"][:2]:
+                    row.update(score=1, action="revise", item_ids=["item1"], reason="依据已有评估脚本和对照记录突出交付。")
         time.sleep(0.05)
         data = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(output, ensure_ascii=False)}}],
                            "usage": {"total_tokens": 10}}, ensure_ascii=False).encode()

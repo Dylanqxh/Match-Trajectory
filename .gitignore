@@ -6,6 +6,7 @@ node_modules/
 !.env.example
 __pycache__/
 .pytest_cache/
+/pytest-of-H1994/
 .ruff_cache/
 .dev-environment/
 artifacts/

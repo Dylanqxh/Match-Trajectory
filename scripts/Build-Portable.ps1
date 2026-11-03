@@ -33,6 +33,8 @@ $skillRoot=(Resolve-Path -LiteralPath 'skills').Path
 $packageArguments=@('--noconfirm','--clean','--onedir','--name','MatchTrajectory',
     '--distpath',$outputPath,'--workpath','build\pyinstaller','--specpath','build','--paths','.',
     '--collect-all','playwright','--collect-all','pypdfium2_raw',
+    '--collect-all','langgraph','--collect-all','langchain_core',
+    '--collect-all','langgraph.checkpoint.sqlite','--collect-all','aiosqlite',
     '--hidden-import','sqlalchemy.dialects.sqlite.pysqlite',
     '--add-data',("${webDist}${separator}web/dist"),
     '--add-data',("${skillRoot}${separator}skills"),
@@ -41,16 +43,17 @@ $packageArguments=@('--noconfirm','--clean','--onedir','--name','MatchTrajectory
     '--add-data',("${browserRoot}${separator}runtime-browsers"),$entry)
 python -m PyInstaller @packageArguments
 if ($LASTEXITCODE -ne 0) { throw 'Portable build failed' }
-$buildReport=@{ milestone='M1'; cleanMachineVerified=$false; liveProvidersVerified=0; realModelQualityVerified=$false; redistributionLicenseReviewComplete=$false;
+$buildReport=@{ milestone='M1.5'; cleanMachineVerified=$false; liveProvidersVerified=0; realModelQualityVerified=$false; redistributionLicenseReviewComplete=$false;
     note='Local portable probe only; not a publicly validated release.'; builtAtUtc=[DateTime]::UtcNow.ToString('o') }
-$buildReport | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'M1-probe.json') -Encoding utf8
+$buildReport | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'M15-probe.json') -Encoding utf8
 @'
-Match-Trajectory M1 本机便携包探针
+Match-Trajectory M1.5 本机便携包探针
 
 双击 MatchTrajectory.exe，浏览器会打开本机工作台。关闭服务窗口可停止服务。
 默认资料目录为程序旁的 data；也可使用 --data-dir 指定可写目录。
 在左下角模型连接中配置 Key，回到首页填写方向和材料，确认发送后生成。
 支持候选采用、编辑、重新审阅、草稿与正式 PDF/DOCX 导出。
+默认生成使用持久图；智能修正策略为可选试用，需先在模型连接中测试工具调用。
 Key 仅保留在本次服务内存中，重启需重新填写。虚构演示不可直接投递。
 此包仍需干净 Windows、完整第三方许可与真实模型验证，尚不是公开发布版。
 '@ | Set-Content -LiteralPath (Join-Path $destination '使用说明.txt') -Encoding utf8

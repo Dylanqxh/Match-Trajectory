@@ -122,6 +122,7 @@ class Issue(StrictModel):
     code: Literal["reference", "unsupported", "attribution", "conflict", "quality", "fit"]
     message: str = Field(min_length=1, max_length=500)
     suggestion: str = Field(default="", max_length=500)
+    repair_action: Literal["revise", "need_input"] | None = None
 
 
 class Review(StrictModel):

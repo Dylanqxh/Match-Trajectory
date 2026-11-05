@@ -14,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
 from app.jobs import JobStore
+from app.lifecycle import Lifecycle
 from app.model_client import ModelClient, ModelRegistry
 from app.models import (
     CreateResume,
@@ -45,9 +46,11 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     jobs = JobStore(store)
     registry = ModelRegistry()
     workflow = Workflow(store, jobs, registry, model_client or ModelClient())
+    lifecycle = Lifecycle(store, jobs, data_dir)
 
     @asynccontextmanager
     async def lifespan(app):
+        lifecycle.retry_cleanup()
         await workflow.start()
         try:
             yield
@@ -103,11 +106,11 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "milestone": "m1.5", "ai_generation": True, "worker_warning": workflow.service_warning}
+        return {"status": "ok", "milestone": "m1.6", "ai_generation": True, "worker_warning": workflow.service_warning}
 
     @app.get("/api/session")
     def initialize_session():
-        response = JSONResponse({"status": "ready", "milestone": "m1.5"})
+        response = JSONResponse({"status": "ready", "milestone": "m1.6"})
         response.set_cookie("mt_session", session, httponly=True, samesite="strict", path="/")
         return response
 
@@ -132,9 +135,32 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     def get_resume(resume_id: str):
         return store.get(resume_id)
 
+    @app.delete("/api/resumes/{resume_id}")
+    async def delete_resume(resume_id: str, body: RevisionRequest):
+        try:
+            record = store.get(resume_id)
+            if record.revision != body.expected_revision:
+                raise Conflict("简历版本已变化，请刷新后再删除")
+        except NotFound:
+            pass
+        for job_id in lifecycle.related_jobs(resume_id):
+            job = jobs.get(job_id)
+            if job['state'] in ('queued', 'running', 'waiting_input'):
+                workflow.cancel(job_id)
+        try:
+            async with workflow.execution_lock:
+                return lifecycle.delete_resume(resume_id, body.expected_revision)
+        finally:
+            workflow.wake()
+
     @app.get("/api/resumes/{resume_id}/history")
     def history(resume_id: str):
         return store.history(resume_id)
+
+    @app.get('/api/resumes/{resume_id}/evidence')
+    def resume_evidence(resume_id: str):
+        record = store.get(resume_id)
+        return {'evidence': jobs.get(record.ai.job_id).get('evidence', []) if record.ai else []}
 
     @app.put("/api/resumes/{resume_id}")
     def save_resume(resume_id: str, body: SaveResume):
@@ -234,23 +260,44 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/api/generation-jobs/{job_id}")
     def get_generation_job(job_id: str):
-        job = jobs.get(job_id)
+        job = public_job(job_id)
         return {**job, "service_warning": workflow.service_warning, "continuation": workflow.continuation(job)}
+
+    def public_job(job_id):
+        job = jobs.get(job_id)
+        if job.get('deleted'):
+            raise NotFound('任务已删除')
+        return job
+
+    @app.delete('/api/generation-jobs/{job_id}')
+    async def delete_generation_job(job_id: str):
+        job = jobs.get(job_id)
+        if job['state'] in ('queued', 'running', 'waiting_input'):
+            workflow.cancel(job_id)
+        try:
+            async with workflow.execution_lock:
+                return lifecycle.delete_job(job_id)
+        finally:
+            workflow.wake()
 
     @app.post("/api/generation-jobs/{job_id}/answer")
     async def answer_generation_job(job_id: str, body: AnswerInput):
+        public_job(job_id)
         return workflow.answer(job_id, body.model_dump())
 
     @app.post("/api/generation-jobs/{job_id}/cancel")
     async def cancel_generation_job(job_id: str):
+        public_job(job_id)
         return workflow.cancel(job_id)
 
     @app.post("/api/generation-jobs/{job_id}/resume")
     async def resume_generation_job(job_id: str):
+        public_job(job_id)
         return workflow.resume(job_id)
 
     @app.post("/api/generation-jobs/{job_id}/adopt")
     async def adopt_generation_job(job_id: str):
+        public_job(job_id)
         return workflow.adopt(job_id)
 
     @app.post("/api/resumes/{resume_id}/review", status_code=201)

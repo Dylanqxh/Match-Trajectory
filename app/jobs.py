@@ -43,6 +43,8 @@ class JobStore:
             existing = connection.execute(select(job_rows).where(job_rows.c.request_id == inputs["request_id"])).mappings().first()
             if existing:
                 saved = json.loads(existing["data"])
+                if saved.get("deleted"):
+                    raise Conflict("该请求对应的任务已删除，请新建任务")
                 if existing["input_hash"] != digest:
                     # Old callers retry the same request after an additive API
                     # default was introduced. Keep its original pinned engine.
@@ -79,7 +81,7 @@ class JobStore:
         keys = ("id", "state", "stage", "created_at", "updated_at", "adopted_resume_id", "mode")
         with self.store.engine.connect() as connection:
             rows = connection.execute(select(job_rows.c.data).order_by(job_rows.c.id)).scalars().all()
-        jobs = sorted((json.loads(data) for data in rows), key=lambda job: job["created_at"], reverse=True)
+        jobs = sorted((j for data in rows if not (j := json.loads(data)).get("deleted")), key=lambda job: job["created_at"], reverse=True)
         return [{**{key: job[key] for key in keys}, "target_role": job["input"]["target_role"]} for job in jobs[:50]]
 
     def mutate(self, job_id, callback):

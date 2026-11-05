@@ -274,8 +274,15 @@ def test_sample1_strips_negatives_marks_skipped_gaps_and_drops_docker_either_way
     assert "社团组织 2 周试运行，覆盖图书馆一层自习区" in body
     assert "【待补充：试运行期间大约多少人使用？" in body
     assert "【待补充：省赛铜奖是个人赛还是团队赛？" in body
-    assert "【待补充：Redis 是否只了解基础用法" in body
+    assert "【待补充：Redis" not in body
+    assert any("Redis" in note for note in job["coverage_notes"])
     assert "Docker" not in body and "Java" in body
+    from app.resume_layout import section_text
+    seat = next(section for section in polished.sections if section.id == "seat")
+    assert "3 人" in section_text(seat)
+    honor = next(section for section in polished.sections if section.kind == "campus")
+    assert section_text(honor) == "校 ACM 集训队 · 队员"
+    assert "校园与荣誉" not in section_text(honor)
     assert all(section.items for section in polished.sections)
     assert not any(section.kind == "skills" and not section.items for section in polished.sections)
     raw = Draft.model_validate(_sample_copy().model_dump())
@@ -299,6 +306,110 @@ def test_ungrounded_skill_claim_is_blocked_with_or_without_contact():
         same = blocking_gates(_job(SAMPLE1, contact=contact), draft)
         assert all("面向对象" not in issue.message or issue.severity == "blocking" for issue in same)
         assert contact in ("", "campus-be-001@example.invalid")
+
+
+def test_jd_gaps_stay_out_of_the_body_and_markers_sit_on_their_sentence():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [
+        {"id": "book", "title": "校园二手书交易平台", "kind": "project", "items": [
+            {"id": "b1", "text": "在库存扣减时加入行锁校验，并编写 12 条单元测试。使用 JMeter 在本机压测，50 个并发线程平均响应约 180ms。", "fact_ids": ["e1"]},
+        ]},
+        {"id": "honor", "title": "校园与荣誉", "kind": "campus", "organization": "校 ACM 集训队", "role": "队员", "items": [
+            {"id": "h1", "text": "省赛铜奖。【待补充：没有线上故障排查、容灾降级相关的经历证据，JD 第 3 条职责暂无可写内容】【待补充：没有技术博客或开源项目的证据，JD 优先项之一缺材料】【待补充：无技术博客、开源项目经历（JD 优先项），暂不写入】", "fact_ids": ["e1"]},
+        ]},
+    ]})
+    job = {"answered": True, "answer_context": [], "evidence": [],
+           "plan": {"questions": [{"id": "q1", "text": "单元测试覆盖了哪些场景？"}],
+                    "gaps": ["没有线上故障排查、容灾降级相关的经历证据，JD 第 3 条职责暂无可写内容"]},
+           "input": {"source_text": SAMPLE1, "jd": JD, "contact": "", "education": [], "career_stage": "entry"}}
+    polished = prepare_draft(job, draft)
+    book = next(section for section in polished.sections if section.id == "book").items[0].text
+    honor = next(section for section in polished.sections if section.kind == "campus").items[0].text
+    assert book.index("单元测试") < book.index("【待补充：单元测试覆盖了哪些场景？】") < book.index("JMeter")
+    assert "【待补充" not in honor
+    assert all("JD" not in item.text for section in polished.sections for item in section.items)
+    assert sum(item.text.count("【待补充") for section in polished.sections for item in section.items) <= 4
+    assert any("故障排查" in note or "技术博客" in note for note in job["coverage_notes"])
+    assert all(item.text.count("【待补充") <= 1 for section in polished.sections for item in section.items)
+
+
+def test_proficiency_cannot_exceed_the_source_for_any_skill():
+    from app.gates import proficiency_violations, soften_proficiency
+    from app.skill import build_evidence, validate_draft
+
+    evidence = build_evidence(SAMPLE1)
+    for claim in ("掌握 Spring Boot。", "熟悉 Spring Boot。", "Redis：掌握基础用法。"):
+        issues = validate_draft(make_draft(claim), evidence)
+        assert any(issue.severity == "blocking" and issue.code == "attribution" for issue in issues), claim
+        assert proficiency_violations(claim, SAMPLE1)
+        softened = soften_proficiency(claim, SAMPLE1)
+        assert "掌握" not in softened and "熟悉" not in softened
+        assert "Spring Boot" in softened or "Redis" in softened
+    assert not proficiency_violations("了解 Docker，只在课程实验里跑过官方镜像。", SAMPLE1)
+    assert not validate_draft(make_draft("熟悉 Java，完成查询接口。"), build_evidence("熟悉 Java，完成查询接口。"))
+
+
+def test_team_size_is_kept_and_identical_model_output_ignores_headers():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [
+        {"id": "book", "title": "校园二手书交易平台后端", "kind": "project", "items": [
+            {"id": "b1", "text": "用 Spring Boot 与 MySQL 实现 3 个订单接口。", "fact_ids": ["e1"]}]},
+        {"id": "seat", "title": "图书馆座位预约小程序后端", "kind": "project", "items": [
+            {"id": "s1", "text": "用 Spring 定时任务释放座位。", "fact_ids": ["e1"]}]},
+    ]})
+    from app.gates import missing_team_sizes
+    raw = "\n".join(f"{section.title} {item.text}" for section in draft.sections for item in section.items)
+    assert missing_team_sizes(raw, SAMPLE1)
+
+    def body(contact, school):
+        education = [{"id": "edu1", "school": school, "degree": "本科", "major": "软件工程", "start_date": "2023-09", "end_date": "2027-06"}] if school else []
+        job = {"answered": False, "answer_context": [], "evidence": [{"id": "profile-edu1-1", "text": f"{school} 本科", "start": 0, "end": 4}] if school else [],
+               "plan": {"questions": [], "gaps": []},
+               "input": {"source_text": SAMPLE1, "jd": JD, "contact": contact, "education": education, "career_stage": "entry"}}
+        polished = prepare_draft(job, draft)
+        return [(section.title, section.role, [item.text for item in section.items]) for section in polished.sections]
+
+    filled = body("campus-be-001@example.invalid", "江城大学")
+    empty = body("", "")
+    assert filled == empty
+    rendered = "\n".join(f"{title} {role} {' '.join(items)}" for title, role, items in filled)
+    assert "4 人" in rendered and "3 人" in rendered
+    assert not missing_team_sizes(rendered, SAMPLE1)
+
+
+def test_body_prompts_are_identical_regardless_of_contact_and_school(tmp_path):
+    import json
+    from copy import deepcopy
+
+    from test_workflow import request, setup
+
+    runner, jobs, _, _, _ = setup(tmp_path, [])
+    edu = {"id": "edu1", "school": "江城示例理工大学", "degree": "本科", "major": "软件工程", "start_date": "2023-09", "end_date": "2027-06"}
+    job = runner.submit(request(source_text=SAMPLE1, education=[edu], jd=JD).model_copy(update={"contact": "campus-be-001@example.invalid"}))
+    stored = jobs.get(job["id"])
+
+    def prompt(contact, school, stage):
+        current = deepcopy(stored)
+        current["input"]["contact"] = contact
+        current["input"]["education"] = [{**edu, "school": school}]
+        current["evidence"] = [item for item in current["evidence"] if not str(item["id"]).startswith("profile-")]
+        current["evidence"].append({"id": "profile-edu1-1", "text": f"{school} {contact} 本科 软件工程", "start": 0, "end": 8})
+        current["plan"] = {"decision": "draft", "selected_fact_ids": ["e1"], "focus": [], "questions": [], "gaps": []}
+        current["draft"] = {"summary": None, "education": [{**edu, "school": school, "fact_ids": ["profile-edu1-1"]}],
+                            "sections": [{"id": "p", "title": "项目", "kind": "project", "items": [{"id": "i", "text": "完成接口", "fact_ids": ["e1"]}]}]}
+        context = runner._context(current, stage)
+        return json.dumps(context, ensure_ascii=False, sort_keys=True)
+
+    for stage in ("plan", "draft", "review", "revise"):
+        filled = prompt("campus-be-001@example.invalid", "江城大学", stage)
+        empty = prompt("", "江城示例理工大学", stage)
+        assert filled == empty, stage
+        assert "campus-be-001@example.invalid" not in filled
+        assert "江城大学" not in filled
 
 
 def test_resume_dates_render_with_dots():

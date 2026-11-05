@@ -164,7 +164,9 @@ class ModelClient:
         if len(user) + len(system) > policy.max_context_chars:
             raise ProviderError("本次上下文过长，请缩短材料或 JD 后重新生成；内容未被截断")
         payload = {"model": config.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                   "max_tokens": policy.max_output_tokens, "stream": False}
+                   "max_tokens": policy.max_output_tokens, "temperature": 0, "stream": False}
+        if config.provider == "deepseek":
+            payload["seed"] = 0
         if config.provider in ("deepseek", "dashscope"):
             payload["response_format"] = {"type": "json_object"}
         if config.provider == "deepseek":

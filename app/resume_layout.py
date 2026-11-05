@@ -51,7 +51,15 @@ def education_text(row):
 
 
 def section_text(row):
-    return " · ".join(filter(None, (row.title, row.organization, row.role)))
+    """Heading line under a block. The block name itself is not repeated."""
+    labels = set(BLOCK_LABELS.values()) | {"教育经历", "工作／实习经历", "工作/实习经历"}
+    parts = []
+    for value in (_field(row, "title"), _field(row, "organization"), _field(row, "role")):
+        shown = (value or "").strip()
+        if not shown or shown in labels or shown in parts:
+            continue
+        parts.append(shown)
+    return " · ".join(parts)
 
 
 def date_key(row):

@@ -11,6 +11,9 @@ GENERIC_BLOCK_TITLES = {
     "工作 / 实习经历", "工作／实习经历", "工作／实习", "实习",
     "校园与荣誉", "教育经历", "教育背景",
 }
+_BLOCK_TITLES = {"教育经历", "专业技能", "项目", "项目经历", "工作 / 实习经历", "工作／实习经历", "工作/实习经历", "校园与荣誉", "实习"}
+SKILL_NAMES = ("Spring Boot",) + tuple(sorted(TECHNOLOGIES, key=len, reverse=True))
+LEVEL_RANK = {"了解": 1, "熟悉": 2, "掌握": 3, "熟练": 3, "精通": 4}
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -122,49 +125,123 @@ def _without_weak_sentences(text: str, techs: list[str]) -> str:
 
 
 def _content_tokens(text: str) -> set[str]:
-    return set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z]{2,}", text or ""))
+    chars = re.findall(r"[\u4e00-\u9fff]", text or "")
+    pieces = {"".join(chars[index:index + 2]) for index in range(len(chars) - 1)}
+    pieces.update(re.findall(r"[A-Za-z][A-Za-z0-9+#.]{1,}", text or ""))
+    return pieces
 
 
-def _marker_for(prompt: str) -> str:
-    text = re.sub(r"^待补充[:：]?", "", prompt.strip().strip("【】")).strip()
-    return f"【待补充：{text}】"
+DETAIL_PROMPT = re.compile(r"多少|几人|几名|几位|什么时候|哪年|哪一年|起止|日期|时间|年份|个人赛|团队赛|人数|时长|篇数|名次")
+COVERAGE_GAP = re.compile(r"没有.{0,24}(?:证据|经历|材料)|无.{0,16}(?:证据|经历)|缺材料|暂不写入|暂无可写|无可写|JD|优先项|不写入")
+MARKER_TEXT = re.compile(r"【待补充：([^】]*)】")
+PROMPT_STOPWORDS = {"什么", "是否", "可以", "这个", "一个", "我们", "还有", "关于", "相关", "材料", "证据", "经历", "没有", "暂不"}
+MAX_MARKERS = 4
 
 
-def _best_item(sections: list[dict], prompt: str):
-    tokens = _content_tokens(prompt)
-    best, best_score, fallback, skill_fallback = None, 0, None, None
-    for section in sections:
-        for item in section.get("items") or []:
-            if section.get("kind") == "skills":
-                skill_fallback = item
-            else:
-                fallback = item
-            score = len(tokens & _content_tokens(f"{section.get('title', '')}\n{item.get('text', '')}"))
-            if score > best_score:
-                best, best_score = item, score
-    if best_score:
-        return best
-    if any(_mentions_tech(prompt, tech) for tech in TECHNOLOGIES):
-        return skill_fallback or fallback
-    return fallback or skill_fallback
+def _prompt_tokens(text: str) -> set[str]:
+    return {token for token in _content_tokens(text) if token not in PROMPT_STOPWORDS}
 
 
-def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> None:
-    """Put skipped questions on an existing item. Never open an empty block for them."""
+def is_coverage_gap(text: str) -> bool:
+    return bool(COVERAGE_GAP.search(text or ""))
+
+
+def is_detail_prompt(text: str, sections: list[dict] | None = None) -> bool:
+    """A fill-in for an existing sentence, not a 'no evidence for this JD item' note."""
+    if not text or is_coverage_gap(text):
+        return False
+    if DETAIL_PROMPT.search(text):
+        return True
+    return any(_sentence_score(sentence, text) >= 2 for section in sections or [] for item in section.get("items") or []
+               for sentence in _sentences(item.get("text") or ""))
+
+
+def _short_prompt(text: str) -> str:
+    cleaned = re.sub(r"^待补充[:：]?", "", (text or "").strip().strip("【】")).strip()
+    return re.split(r"[，,；;]", cleaned)[0].strip()[:28]
+
+
+def _sentences(text: str) -> list[str]:
+    return [part for part in re.split(r"(?<=[。；\n])", text or "") if part.strip()]
+
+
+def _sentence_score(sentence: str, prompt: str) -> int:
+    overlap = _prompt_tokens(sentence) & _prompt_tokens(prompt)
+    return sum(len(token) for token in overlap)
+
+
+def _insert_marker_after(text: str, sentence: str, marker: str) -> str:
+    if marker in text:
+        return text
+    index = text.find(sentence)
+    if index < 0:
+        return text.rstrip() + "\n" + marker
+    end = index + len(sentence)
+    rest = text[end:]
+    gap = "\n" if rest and not rest.startswith("\n") else ""
+    return text[:end].rstrip() + "\n" + marker + gap + rest
+
+
+def _place_marker(item: dict, prompt: str) -> bool:
+    """One fill-in, on the sentence it asks about, never glued to a different sentence."""
+    if "【待补充" in (item.get("text") or ""):
+        return False
+    marker = f"【待补充：{_short_prompt(prompt)}】"
+    best, score = "", 0
+    for sentence in _sentences(item.get("text") or ""):
+        current = _sentence_score(sentence, prompt)
+        if current > score:
+            best, score = sentence, current
+    if score <= 0 or not best:
+        return False
+    item["text"] = _insert_marker_after(item.get("text") or "", best, marker)
+    item["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in item["text"]]
+    return True
+
+
+def _strip_body_markers(text: str) -> tuple[str, list[str]]:
+    removed = []
+
+    def replace(match):
+        removed.append(match.group(1).strip())
+        return ""
+
+    cleaned = re.sub(r"[ \t]+\n", "\n", MARKER_TEXT.sub(replace, text or ""))
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned).strip()
+    return cleaned, removed
+
+
+def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
+    """Fill-in prompts only, one per item and at most four. JD gaps are notes, not body text."""
+    notes, placed, ranked = [], 0, []
     for prompt in prompts:
-        marker = _marker_for(prompt)
-        core = prompt.strip().strip("？?。 ")
-        if any(marker in (item.get("text") or "") or (core and core in (item.get("text") or ""))
-               for section in sections for item in section.get("items") or []):
+        if not prompt:
             continue
-        target = _best_item(sections, prompt)
-        if not target:
+        if is_coverage_gap(prompt) or not is_detail_prompt(prompt, sections):
+            if prompt not in notes:
+                notes.append(prompt)
             continue
-        text = (target.get("text") or "").rstrip()
-        if text and text[-1] not in "。；":
-            text += "。"
-        target["text"] = text + marker
-        target["highlights"] = [phrase for phrase in target.get("highlights") or [] if phrase and phrase in target["text"]]
+        best_item, best_score = None, 0
+        for section in sections:
+            for item in section.get("items") or []:
+                for sentence in _sentences(item.get("text") or ""):
+                    score = _sentence_score(sentence, prompt)
+                    if section.get("kind") == "campus":
+                        score -= 1
+                    if score > best_score:
+                        best_item, best_score = item, score
+        ranked.append((best_score, prompt, best_item))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    for score, prompt, item in ranked:
+        if placed >= MAX_MARKERS or score <= 0 or item is None or "【待补充" in (item.get("text") or ""):
+            if prompt not in notes:
+                notes.append(prompt)
+            continue
+        if _place_marker(item, prompt):
+            placed += 1
+        elif prompt not in notes:
+            notes.append(prompt)
+    return notes
 
 
 def _skipped_followups(job: dict) -> list[str]:
@@ -174,6 +251,116 @@ def _skipped_followups(job: dict) -> list[str]:
     prompts = [question.get("text", "").strip() for question in plan.get("questions") or [] if isinstance(question, dict) and question.get("text")]
     prompts.extend(gap.strip() for gap in plan.get("gaps") or [] if isinstance(gap, str) and gap.strip())
     return prompts
+
+
+def _skill_hits(text: str) -> list[str]:
+    found, occupied = [], [False] * (len(text or "") + 1)
+    for name in SKILL_NAMES:
+        for match in re.finditer(r"(?<![A-Za-z])" + re.escape(name) + r"(?![A-Za-z])", text or "", re.IGNORECASE):
+            if any(occupied[match.start():match.end()]):
+                continue
+            for index in range(match.start(), match.end()):
+                occupied[index] = True
+            found.append(name)
+    return found
+
+
+def _stated_level(source: str, skill: str) -> int:
+    best = 0
+    for match in re.finditer(re.escape(skill), source or "", re.IGNORECASE):
+        window = source[max(0, match.start() - 16):match.end() + 16]
+        for word, rank in LEVEL_RANK.items():
+            if word in window:
+                best = max(best, rank)
+    return best
+
+
+def proficiency_violations(claim: str, source: str) -> list[str]:
+    """Block 熟悉/掌握/精通/熟练 unless the source states that level for the skill."""
+    violations = []
+    for word in ("精通", "熟练使用", "熟练", "掌握", "熟悉"):
+        rank = LEVEL_RANK["熟练" if word == "熟练使用" else word]
+        for match in re.finditer(word, claim or ""):
+            window = claim[max(0, match.start() - 20):match.end() + 24]
+            skills = _skill_hits(window) or _skill_hits(claim)
+            for skill in skills:
+                if _stated_level(source, skill) < rank:
+                    label = f"{word}{skill}"
+                    if label not in violations:
+                        violations.append(label)
+    return violations
+
+
+def soften_proficiency(text: str, source: str) -> str:
+    """Drop a proficiency word the source does not state. Keep the skill and its own qualifier."""
+    def replace(match):
+        word = match.group(0)
+        rank = LEVEL_RANK["熟练" if word == "熟练使用" else word]
+        window = text[max(0, match.start() - 20):match.end() + 24]
+        skills = _skill_hits(window)
+        if skills and any(_stated_level(source, skill) < rank for skill in skills):
+            return ""
+        if not skills and word not in (source or ""):
+            return ""
+        return word
+
+    softened = re.sub(r"精通|熟练使用|熟练|掌握|熟悉", replace, text or "")
+    return re.sub(r"[：:]{2,}", "：", re.sub(r"\s{2,}", " ", softened)).strip()
+
+
+def _clear_block_name(value: str) -> str:
+    text = (value or "").strip()
+    if text in _BLOCK_TITLES:
+        return ""
+    for label in sorted(_BLOCK_TITLES, key=len, reverse=True):
+        text = text.replace(label, "")
+    return text.strip(" ·")
+
+
+def _restore_honor_heading(section: dict, source: str) -> None:
+    if section.get("kind") != "campus":
+        return
+    for key in ("title", "organization", "role"):
+        section[key] = _clear_block_name(section.get(key) or "")
+    match = re.search(r"(校\s*ACM\s*集训队)\s*(队员|队长)", source or "")
+    blob = " ".join(filter(None, (section.get("title"), section.get("organization"), section.get("role"),
+                                   " ".join(item.get("text") or "" for item in section.get("items") or []))))
+    if not match or ("集训队" in blob and match.group(2) in blob and "校园与荣誉" not in blob):
+        if not (section.get("title") or "").strip():
+            section["title"] = section.get("organization") or section.get("role") or "校园经历"
+            if section.get("organization") == section["title"]:
+                section["organization"] = ""
+        return
+    section["title"] = re.sub(r"\s+", " ", match.group(1)).strip()
+    section["role"] = match.group(2)
+    section["organization"] = ""
+    if not section["title"]:
+        section["title"] = section["role"] or "校园经历"
+
+
+def _restore_team_sizes(sections: list[dict], source: str) -> None:
+    for match in re.finditer(r"项目[^\n：:]{0,8}[：:]\s*([^（\n]+?)（[^）]*?(\d+)\s*人", source or ""):
+        name, count = match.group(1).strip(), match.group(2)
+        label = f"{count} 人小组"
+        for section in sections:
+            if section.get("kind") not in ("project", "other", "research"):
+                continue
+            blob = section_blob(section) + (section.get("title") or "") + (section.get("role") or "")
+            if name[:4] not in blob and name[-4:] not in blob:
+                continue
+            if re.search(rf"{count}\s*人", blob):
+                continue
+            role = section.get("role") or ""
+            section["role"] = (role + " · " + label).strip(" ·") if role else label
+
+
+def missing_team_sizes(text: str, source: str) -> list[str]:
+    missing = []
+    for match in re.finditer(r"项目[^\n：:]{0,8}[：:]\s*([^（\n]+?)（[^）]*?(\d+)\s*人", source or ""):
+        name, count = match.group(1).strip(), match.group(2)
+        if (name[:4] in text or name[-4:] in text) and not re.search(rf"{count}\s*人", text):
+            missing.append(f"{name[:8]}{count}人")
+    return missing
 
 
 def polish_draft(payload: dict, job: dict) -> dict:
@@ -191,14 +378,16 @@ def polish_draft(payload: dict, job: dict) -> dict:
         summary["highlights"] = [phrase for phrase in summary.get("highlights") or [] if phrase and phrase in summary["text"]]
         if not summary["text"]:
             payload["summary"] = None
-    kept = []
+    kept, removed_markers = [], []
     for section in payload.get("sections") or []:
         items = []
         skill_block = section.get("kind") == "skills" or "技能" in (section.get("title") or "")
         for item in section.get("items") or []:
-            text = _drop_negative_clauses(item.get("text") or "", source).strip()
+            text = soften_proficiency(_drop_negative_clauses(item.get("text") or "", source), source).strip()
             if skill_block and weak:
                 text = _without_weak_sentences(text, weak).strip()
+            text, removed = _strip_body_markers(text)
+            removed_markers.extend(inner for inner in removed if inner)
             if not text:
                 continue
             updated = dict(item)
@@ -209,8 +398,19 @@ def polish_draft(payload: dict, job: dict) -> dict:
             continue
         updated_section = dict(section)
         updated_section["items"] = items
+        _restore_honor_heading(updated_section, source)
         kept.append(updated_section)
-    _inject_gap_markers(kept, _skipped_followups(job))
+    _restore_team_sizes(kept, source)
+    detail, coverage = [], []
+    for prompt in [*removed_markers, *_skipped_followups(job)]:
+        bucket = detail if is_detail_prompt(prompt, kept) else coverage
+        if prompt not in bucket and prompt not in detail:
+            bucket.append(prompt)
+    notes = _inject_gap_markers(kept, detail)
+    for note in coverage:
+        if note not in notes:
+            notes.append(note)
+    job["coverage_notes"] = notes
     payload["sections"] = kept
     return payload
 

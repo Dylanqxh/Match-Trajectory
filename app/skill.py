@@ -154,7 +154,7 @@ def _moved_across_projects(claim, source):
 
 
 def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
-    from app.gates import ungrounded_familiarity
+    from app.gates import proficiency_violations, ungrounded_familiarity
 
     sources = {e.id: e.text for e in evidence}
     issues = []
@@ -188,12 +188,9 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
         missing_skill = ungrounded_familiarity(claim.text, source)
         if missing_skill:
             add("unsupported", f"「{missing_skill}」没有出现在引用材料里，不能写成已熟悉或已掌握的技能。")
-        for technology in TECHNOLOGIES:
-            familiar = re.compile(rf"(熟悉|精通).{{0,8}}{re.escape(technology)}|{re.escape(technology)}.{{0,8}}(熟悉|精通)", re.IGNORECASE)
-            aware = re.compile(rf"了解.{{0,12}}{re.escape(technology)}|{re.escape(technology)}.{{0,12}}了解", re.IGNORECASE)
-            if familiar.search(claim.text) and not familiar.search(source) and aware.search(source):
-                add("attribution", f"原文对 {technology} 是了解或试用，不能写成熟悉或精通。")
-                break
+        overstated = proficiency_violations(claim.text, source)
+        if overstated:
+            add("attribution", f"熟练度超过原文（{'、'.join(overstated[:4])}）。原文没有写这个程度时，只保留技能名称或原文里的说法。")
         if "数倍" in claim.text and "数倍" not in source and not re.search(r"\d+(?:\.\d+)?\s*倍", source):
             issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“数倍”这类定性夸大未在引用材料中出现，请改回原文口径。"))
         if "显著提升" in claim.text and "显著提升" not in source:

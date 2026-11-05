@@ -60,6 +60,8 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
           value={answers[question.id] || ""} onChange={e => setAnswers({ ...answers, [question.id]: e.target.value })}/></label>)}
         <div className="button-row"><button className="primary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers, skip: false }))}>提交补充并生成</button>
           <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，直接生成</button></div></div>}
+      {(job.coverage_notes?.length || job.plan?.gaps?.length) ? <div className="notice"><h3>材料缺口（不写入正文）</h3>
+        {[...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index).map(note => <p key={note}>{note}</p>)}</div> : null}
       {job.draft && <div className="candidate-content">
         <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "事实审阅通过；写作质量见单独报告，仍需核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
         {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[resumeDate(row.start_date), resumeDate(row.end_date)].filter(Boolean).join(" — ")}</p>)}

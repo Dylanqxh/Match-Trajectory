@@ -199,11 +199,38 @@ def _insert_marker_after(text: str, sentence: str, marker: str) -> str:
     return text[:end].rstrip() + "\n" + marker + gap + rest
 
 
-def _place_marker(item: dict, prompt: str) -> bool:
-    """One fill-in, on the sentence it asks about, never glued to a different sentence."""
+def _detail_already_present(section: dict, item: dict, label: str) -> bool:
+    """Skip a fill-in when the heading, dates, or sentence already answer it."""
+    blob = " ".join(filter(None, (
+        section.get("title"), section.get("organization"), section.get("role"),
+        section.get("start_date"), section.get("end_date"), item.get("text"),
+    )))
+    if label == "个人负责的模块":
+        return re.search(r"负责\s*\S", blob) is not None
+    if label == "起止时间":
+        if section.get("start_date") and section.get("end_date"):
+            return True
+        return re.search(r"\d{4}[.\-/]\d{1,2}\s*[\-—–~到至]+\s*\d{4}[.\-/]\d{1,2}", blob) is not None
+    if label == "岗位名称":
+        return bool(section.get("role"))
+    if label == "使用人数":
+        return re.search(r"\d+\s*(?:多)?\s*(?:名|位)", item.get("text") or "") is not None
+    if label == "效果数据":
+        return re.search(r"\d+", item.get("text") or "") is not None
+    if label == "大约多少篇":
+        return re.search(r"\d+\s*篇", item.get("text") or "") is not None
+    if label == "个人赛还是团队赛":
+        return re.search(r"个人赛|团队|组队|小组", blob) is not None
+    return False
+
+
+def _place_marker(section: dict, item: dict, prompt: str) -> str:
+    """One fill-in, on the sentence it asks about. 'present' means the detail is already written."""
     label = marker_label(prompt)
     if not label or "【待补充" in (item.get("text") or ""):
-        return False
+        return "skip"
+    if _detail_already_present(section, item, label):
+        return "present"
     marker = f"【待补充：{label}】"
     best, score = "", 0
     for sentence in _sentences(item.get("text") or ""):
@@ -211,10 +238,10 @@ def _place_marker(item: dict, prompt: str) -> bool:
         if current > score:
             best, score = sentence, current
     if score <= 0 or not best:
-        return False
+        return "skip"
     item["text"] = _insert_marker_after(item.get("text") or "", best, marker)
     item["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in item["text"]]
-    return True
+    return "placed"
 
 
 def _strip_body_markers(text: str) -> tuple[str, list[str]]:
@@ -239,7 +266,7 @@ def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
             if prompt not in notes:
                 notes.append(prompt)
             continue
-        best_item, best_score = None, 0
+        best_item, best_section, best_score = None, None, 0
         for section in sections:
             for item in section.get("items") or []:
                 for sentence in _sentences(item.get("text") or ""):
@@ -247,17 +274,18 @@ def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
                     if section.get("kind") == "campus":
                         score -= 1
                     if score > best_score:
-                        best_item, best_score = item, score
-        ranked.append((best_score, prompt, best_item))
+                        best_item, best_section, best_score = item, section, score
+        ranked.append((best_score, prompt, best_item, best_section))
     ranked.sort(key=lambda row: (-row[0], row[1]))
-    for score, prompt, item in ranked:
+    for score, prompt, item, section in ranked:
         if placed >= MAX_MARKERS or score <= 0 or item is None or "【待补充" in (item.get("text") or ""):
             if prompt not in notes:
                 notes.append(prompt)
             continue
-        if _place_marker(item, prompt):
+        outcome = _place_marker(section, item, prompt)
+        if outcome == "placed":
             placed += 1
-        elif prompt not in notes:
+        elif outcome == "skip" and prompt not in notes:
             notes.append(prompt)
     return notes
 
@@ -356,20 +384,39 @@ def _restore_honor_heading(section: dict, source: str) -> None:
             section["organization"] = ""
 
 
+def _project_teams(source: str) -> list[tuple[str, str]]:
+    found = []
+    for match in re.finditer(r"项目[^\n：:]{0,8}[：:]\s*([^（\n]+?)（([^）]*)）", source or ""):
+        count = re.search(r"(\d+)\s*人", match.group(2))
+        if count:
+            found.append((match.group(1).strip(), count.group(1)))
+    return found
+
+
+def _project_overlap(blob: str, name: str) -> int:
+    generic = {"项目", "后端", "课程", "设计", "开发"}
+    return sum(1 for index in range(len(name) - 1) if name[index:index + 2] not in generic and name[index:index + 2] in blob)
+
+
 def _restore_team_sizes(sections: list[dict], source: str) -> None:
-    for match in re.finditer(r"项目[^\n：:]{0,8}[：:]\s*([^（\n]+?)（[^）]*?(\d+)\s*人", source or ""):
-        name, count = match.group(1).strip(), match.group(2)
+    """Keep the source headcount on the role line, even when the role is only a job title."""
+    for name, count in _project_teams(source):
         label = f"{count} 人小组"
+        best, best_score = None, 0
         for section in sections:
             if section.get("kind") not in ("project", "other", "research"):
                 continue
             blob = section_blob(section) + (section.get("title") or "") + (section.get("role") or "")
-            if name[:4] not in blob and name[-4:] not in blob:
-                continue
-            if re.search(rf"{count}\s*人", blob):
-                continue
-            role = section.get("role") or ""
-            section["role"] = (role + " · " + label).strip(" ·") if role else label
+            score = _project_overlap(blob, name)
+            if score > best_score:
+                best, best_score = section, score
+        if best is None or best_score < 1:
+            continue
+        blob = section_blob(best) + (best.get("title") or "") + (best.get("role") or "")
+        if re.search(rf"{count}\s*人", blob):
+            continue
+        role = best.get("role") or ""
+        best["role"] = f"{role}（{label}）" if role else label
 
 
 def missing_team_sizes(text: str, source: str) -> list[str]:

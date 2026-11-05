@@ -429,6 +429,45 @@ def test_resume_dates_render_with_dots():
     assert "2023.09" in doc and "2023-09" not in doc
 
 
+def test_marker_is_dropped_when_responsibility_or_dates_are_already_present():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [
+        {"id": "book", "title": "校园二手书交易平台后端", "kind": "project", "items": [
+            {"id": "b1", "text": "本人负责订单模块与库存扣减接口。", "fact_ids": ["e1"]}]},
+        {"id": "honor", "title": "校 ACM 集训队", "kind": "campus", "role": "队员", "items": [
+            {"id": "h1", "text": "（2024.09–2025.06）参加省赛，获铜奖。", "fact_ids": ["e1"]}]},
+    ]})
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {"questions": [
+        {"id": "q1", "text": "你在二手书项目里负责哪个模块？"},
+        {"id": "q2", "text": "集训和省赛的起止时间是什么？"},
+    ], "gaps": []}, "input": {"source_text": SAMPLE1, "jd": JD, "contact": "", "education": [], "career_stage": "entry"}}
+    polished = prepare_draft(job, draft)
+    body = "\n".join(item.text for section in polished.sections for item in section.items)
+    assert "【待补充：个人负责的模块】" not in body
+    assert "【待补充：起止时间】" not in body
+    assert "负责订单模块" in body and "获铜奖" in body
+
+
+def test_team_size_is_written_into_a_role_that_only_names_the_job():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [
+        {"id": "book", "title": "二手书交易", "kind": "project", "role": "后端开发", "items": [
+            {"id": "b1", "text": "实现下单、取消、超时关单 3 个接口。", "fact_ids": ["e1"]}]},
+        {"id": "seat", "title": "座位预约", "kind": "project", "role": "后端开发", "items": [
+            {"id": "s1", "text": "用 Spring 定时任务释放座位。", "fact_ids": ["e1"]}]},
+    ]})
+    job = {"answered": False, "answer_context": [], "evidence": [], "plan": {"questions": [], "gaps": []},
+           "input": {"source_text": SAMPLE1, "jd": JD, "contact": "", "education": [], "career_stage": "entry"}}
+    polished = prepare_draft(job, draft)
+    roles = {section.id: section.role for section in polished.sections}
+    assert roles["book"] == "后端开发（4 人小组）"
+    assert roles["seat"] == "后端开发（3 人小组）"
+
+
 def test_skills_heading_does_not_create_an_empty_claim():
     from app.generation_models import Draft
     from app.skill import build_evidence, validate_draft

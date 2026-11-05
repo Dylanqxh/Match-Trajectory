@@ -5,6 +5,7 @@ import uuid
 
 from sqlalchemy import Column, MetaData, String, Table, Text, insert, select, update
 
+from app.budget import DEFAULT_POLICY, budget_for_job
 from app.model_client import OUTPUT_CONTRACT_VERSION
 from app.store import Conflict, NotFound, ResumeStore, timestamp
 
@@ -63,7 +64,8 @@ class JobStore:
                    "question_group": "", "answered": False, "answer_submission": None,
                    "framework": False, "adopted_resume_id": None, "run_token": "", "request_started": None,
                    "output_contract_version": OUTPUT_CONTRACT_VERSION,
-                   "engine": inputs.get("execution_mode", "legacy"), "engine_version": "m15-v1",
+                   "engine": inputs.get("execution_mode", "legacy"), "engine_version": "m17-v2",
+                   "budget_policy": DEFAULT_POLICY.model_dump(),
                    "step_receipts": [],
                    "created_at": timestamp(), "updated_at": timestamp()}
             if extra:
@@ -110,7 +112,7 @@ class JobStore:
             for data in rows:
                 job = json.loads(data)
                 if job["request_started"]:
-                    job["elapsed_ms"] += min(45000, max(0, (time.time() - job["request_started"]) * 1000))
+                    job["elapsed_ms"] += min(budget_for_job(job).request_ms, max(0, (time.time() - job["request_started"]) * 1000))
                 job.update(state="interrupted", run_token="", request_started=None,
                            error="服务已重启或停止；未完成调用可能计费。连接原模型后可明确继续，预算保留。")
                 self._write(connection, job)

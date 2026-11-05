@@ -72,8 +72,25 @@ def build_evidence(text: str, prefix: str = "e") -> list[Evidence]:
 
 
 def normalize_source_dates(text):
-    text = re.sub(r"(?<!\d)((?:19|20|21)\d{2})[./年-](\d{1,2})月?", lambda m: f"{m[1]}-{int(m[2]):02d}", text)
-    return re.sub(r"(?<!\d)((?:19|20|21)\d{2})年", r"\1", text)
+    text = re.sub(r"(?<!\d)((?:19|20|21)\d{2})\s*[./年-]\s*(\d{1,2})\s*月?", lambda m: f"{m[1]}-{int(m[2]):02d}", text)
+    return re.sub(r"(?<!\d)((?:19|20|21)\d{2})\s*年", r"\1", text)
+
+
+def canonical_quantity(text):
+    """Normalize spelling, preserving exact digits, magnitude and units."""
+    value = re.sub(r"\s", "", text)
+    match = re.fullmatch(r"([\d.,]+)(.*)", value)
+    number, unit = match.groups()
+    if ',' in number:
+        if not re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", number):
+            return value
+        number = number.replace(',', '')
+    if not re.fullmatch(r"\d+(?:\.\d+)?", number):
+        return value
+    whole, dot, fraction = number.partition('.')
+    number = whole.lstrip('0') or '0'
+    fraction = fraction.rstrip('0')
+    return number + ('.' + fraction if dot and fraction else '') + unit
 
 
 def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
@@ -89,8 +106,8 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
             add("reference", "段落引用了不存在的材料，不能视为有事实依据。")
             continue
         source = "\n".join(sources[ref] for ref in claim.fact_ids)
-        source_numbers = {re.sub(r"\s", "", n) for n in numeric.findall(normalize_source_dates(source))}
-        if any(re.sub(r"\s", "", n) not in source_numbers for n in numeric.findall(normalize_source_dates(claim.text))):
+        source_numbers = {canonical_quantity(n) for n in numeric.findall(normalize_source_dates(source))}
+        if any(canonical_quantity(n) not in source_numbers for n in numeric.findall(normalize_source_dates(claim.text))):
             add("unsupported", "段落出现了引用原文中没有的数字或数量口径，请删除或补充依据。")
         for technology in TECHNOLOGIES:
             pattern = r"(?<![A-Za-z])" + re.escape(technology) + r"(?![A-Za-z])"

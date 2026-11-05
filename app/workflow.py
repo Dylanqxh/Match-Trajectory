@@ -2,12 +2,13 @@ import asyncio
 import time
 import uuid
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.budget import budget_for_job
 from app.generation_models import (
     Draft,
-    DraftEducation,
     Evidence,
     Plan,
     Review,
@@ -18,9 +19,8 @@ from app.generation_service import GenerationService
 from app.model_client import ModelOutputError
 from app.models import resume_hash
 from app.providers import ProviderError
-from app.skill import validate_draft, validate_quality
+from app.skill import validate_draft
 from app.store import Conflict
-from app.writing_quality import editorial_quality, quality_issues
 
 
 class StaleRun(Exception):
@@ -78,10 +78,14 @@ class Workflow(GenerationService):
             if job["state"] != "running" or job["run_token"] != token:
                 raise StaleRun
             before = (job["stage"], job["revisions"])
+            from app.phases import phase_key
+
+            before_key = phase_key(job)
             apply(job, connection)
             if before != (job["stage"], job["revisions"]) or job["state"] in ("ready", "waiting_input"):
                 job.setdefault("step_receipts", []).append({"step": f"{before[0]}:{before[1]}",
-                    "next_stage": job["stage"], "state": job["state"], "calls": job["calls"]})
+                    "next_stage": job["stage"], "state": job["state"], "calls": job["calls"],
+                    "step_id": before_key, "engine_version": job.get("engine_version", "legacy")})
 
         return self.jobs.mutate(job_id, guarded)
 
@@ -90,17 +94,20 @@ class Workflow(GenerationService):
             from app.supervisor import supervisor_context
 
             return supervisor_context(job)
+        reference = datetime.fromisoformat(job["created_at"]).astimezone(timezone(timedelta(hours=8)))
         context = {"instructions": job["skill"].get("stage_instructions", {}).get(stage, job["skill"]["instructions"]), "target_role": job["input"]["target_role"],
-                   "reference_date": job["created_at"][:10], "reference_timezone": "UTC",
+                   "reference_date": reference.date().isoformat(), "reference_timezone": "Asia/Shanghai",
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
                                     "jd": job["input"]["jd"], "role": job["skill"]["role"]},
                    "evidence": job["evidence"], "answer_context": job.get("answer_context", [])}
+        policy = budget_for_job(job)
+        context["_budget_policy"] = policy.model_dump()
         context["fixed_education"] = job["input"].get("education", [])
         context["loaded_resources"] = job["skill"].get("stage_resources", {}).get(stage, [])
         context["candidate_context"] = {"career_stage": job["input"].get("career_stage", "unspecified"),
                                         "has_career_gap": job["input"].get("has_career_gap", False)}
         if stage == "plan":
-            context["question_budget"] = 3 if job["input"]["allow_questions"] and not job["answered"] else 0
+            context["question_budget"] = policy.question_limit if job["input"]["allow_questions"] and not job["answered"] else 0
         if stage in ("draft", "revise"):
             context["plan"] = job["plan"]
         if stage in ("review", "revise"):
@@ -121,14 +128,10 @@ class Workflow(GenerationService):
         stage = job["stage"]
         key = f"{stage}:{job['revisions']}"
         config = self.registry.get(job["config_revision"])
+        policy = budget_for_job(job)
 
         def reserve(current, _):
-            if current["calls"] >= 8 or current["elapsed_ms"] >= 180000:
-                raise ProviderError("任务预算已用尽，已有材料和候选已保留；请查看候选或新建任务")
-            if stage in ("draft", "revise") and (current["calls"] >= 7 or current["elapsed_ms"] >= 165000):
-                raise ProviderError("剩余预算需保留给审阅，不能继续生成未经审阅的新正文；已有候选保留")
-            if current.get("invalid_outputs", {}).get(key, 0) >= 2:
-                raise ProviderError("这个阶段的结构重试已用尽，已有内容已保留")
+            policy.validate_request(stage, current)
             current["calls"] += 1
             current["request_started"] = time.time()
             current["attempts"][key] = current["attempts"].get(key, 0) + 1
@@ -138,16 +141,17 @@ class Workflow(GenerationService):
         error = None
         value = None
         try:
-            remaining = (180000 - job["elapsed_ms"]) / 1000
-            timeout = min(20, max(1, remaining - 30)) if stage == "supervise" else min(45, remaining)
-            if stage in ("draft", "revise"):
-                timeout = min(timeout, max(1, remaining - 15))
+            timeout = policy.request_timeout_ms(stage, job["elapsed_ms"]) / 1000
             async with asyncio.timeout(timeout):
                 context = self._context(job, stage)
                 call = self.client.delegate(config, context) if stage == "supervise" else self.client.complete(config, stage, context, schema)
                 task = asyncio.create_task(call)
                 self._active = (job["id"], task)
                 value = await task
+            if stage in ("draft", "revise"):
+                from app.phases import prepare_draft
+
+                value.value = prepare_draft(job, value.value)
             if stage == "supervise":
                 from app.supervisor import validate_decision
 
@@ -242,92 +246,83 @@ class Workflow(GenerationService):
                 self._change(job["id"], token, lambda j, _: j.update(state="failed", error="任务处理失败，材料与已完成步骤已保留，请查看后继续。", run_token="", request_started=None))
         return True
 
-    async def execute_step(self, job, token):
-        stage = job["stage"]
-        if stage == "supervise":
-            from app.supervisor import RepairDecision
+    async def _stage_call(self, job, token, stage, schema):
+        from app.budget import budget_for_job
+        from app.phases import StageResult, phase_key
 
-            if job["calls"] > 5 or job["elapsed_ms"] >= 140000:
-                self._change(job["id"], token, lambda j, _: j.update(stop_reason="剩余预算不足以安排主管、修正和审阅，已保留当前候选与问题"))
-                self._finish(job, token)
-                return
-            try:
-                result = await self._request(job, token, RepairDecision)
-            except ModelOutputError:
-                current = self.jobs.get(job["id"])
-                if current.get("invalid_outputs", {}).get(f"supervise:{current['revisions']}", 0) < 2 and current["calls"] <= 5:
-                    return
-                raise
-            if result.action == "deliver":
-                self._finish(job, token)
-            else:
-                self._change(job["id"], token, lambda j, _: j.update(stage="revise", repair_decision=result.model_dump()))
-            return
-        if stage == "review":
-            candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
-            checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
-            if checks:
-                check_payload = [i.model_dump() for i in checks]
-                job = self._change(job["id"], token, lambda j, _, issues=check_payload: j.update(issues=issues, review=None))
-                if not self._can_revise(job):
-                    self._finish(job, token)
-                    return True
-                self._change(job["id"], token, lambda j, _: j.update(stage="revise"))
-                return
-        review_schema = WritingReview if job["skill"].get("stage_instructions") else Review
-        schema = {"plan": Plan, "draft": Draft, "review": review_schema, "revise": Draft}[stage]
+        key = phase_key(job)
         try:
             output = await self._request(job, token, schema)
         except ModelOutputError:
             current = self.jobs.get(job["id"])
-            if current.get("invalid_outputs", {}).get(f"{stage}:{current['revisions']}", 0) < 2 and current["calls"] < 8:
-                return
+            policy = budget_for_job(current)
+            retry = (current.get("invalid_outputs", {}).get(f"{stage}:{current['revisions']}", 0) < policy.max_invalid_outputs
+                     and current["calls"] < policy.max_calls)
+            if stage == "supervise":
+                retry = retry and policy.can_supervise(current)
+            if retry:
+                return StageResult(stage, key, "retry")
             raise
-        if stage == "plan":
-            def plan_done(current, _, plan=output):
-                current["plan"] = plan.model_dump()
-                if plan.decision == "ask" and current["input"]["allow_questions"]:
-                    current.update(state="waiting_input", question_group=uuid.uuid4().hex, run_token="")
-                else:
-                    current["stage"] = "draft"
+        return StageResult(stage, key, "output", output)
 
-            job = self._change(job["id"], token, plan_done)
-            if job["state"] == "waiting_input":
-                return True
-        elif stage in ("draft", "revise"):
-            def draft_done(current, _, draft=output, completed_stage=stage):
-                if current["input"].get("education"):
-                    fixed = [DraftEducation(**row, fact_ids=[e["id"] for e in current["evidence"]
-                             if e["id"].startswith(f"profile-{row['id']}-")])
-                             for row in current["input"]["education"]]
-                    draft = Draft.model_validate({**draft.model_dump(), "education": [row.model_dump() for row in fixed]})
-                current.update(draft=draft.model_dump(), stage="review", review=None, issues=[])
-                current.pop("repair_decision", None)
-                if completed_stage == "revise":
-                    current["revisions"] += 1
+    async def plan_stage(self, job, token):
+        return await self._stage_call(job, token, "plan", Plan)
 
-            self._change(job["id"], token, draft_done)
-        else:
-            candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
-            quality = validate_quality(candidate_type.model_validate(job["draft"]))
-            report = editorial_quality(getattr(output, "quality", None), quality, job["evidence"])
-            review_payload = output.model_dump()
-            if report:
-                review_payload["quality"] = report.model_dump()
-            all_issues = [i.model_dump() for i in [*output.issues, *quality, *quality_issues(report)]]
-            editorial_fix = (report and report.status == "revise") or any("压缩" in i.message or "合并" in i.message or "重复" in i.message for i in quality)
+    async def draft_stage(self, job, token):
+        return await self._stage_call(job, token, "draft", Draft)
 
-            def review_done(current, connection):
-                from app.supervisor import should_supervise
+    async def revise_stage(self, job, token):
+        return await self._stage_call(job, token, "revise", Draft)
 
-                current.update(review=review_payload, issues=all_issues)
-                if (output.verdict == "pass" and not editorial_fix) or not self._can_revise(current):
-                    self._finish_state(current, connection)
-                else:
-                    current["stage"] = "supervise" if should_supervise(current) else "revise"
+    async def review_stage(self, job, token):
+        from app.phases import StageResult, phase_key
 
-            self._change(job["id"], token, review_done)
+        candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
+        checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
+        if checks:
+            return StageResult("review", phase_key(job), "program_issues", [i.model_dump() for i in checks])
+        schema = WritingReview if job["skill"].get("stage_instructions") else Review
+        return await self._stage_call(job, token, "review", schema)
+
+    async def supervise_stage(self, job, token):
+        from app.budget import budget_for_job
+        from app.phases import StageResult, phase_key
+        from app.supervisor import RepairDecision
+
+        if not budget_for_job(job).can_supervise(job):
+            return StageResult("supervise", phase_key(job), "stop")
+        return await self._stage_call(job, token, "supervise", RepairDecision)
+
+    def commit_stage(self, job, token, result):
+        from app.phases import ALLOWED, phase_key, transition
+
+        decision = []
+        def commit(current, connection):
+            if result.stage != current["stage"] or result.key != phase_key(current):
+                raise StaleRun
+            move = transition(current, result)
+            if move.target not in ALLOWED[result.stage]:
+                raise Conflict("阶段转移不合法，已有结果保留")
+            current.update(move.updates)
+            if move.target == "done":
+                self._finish_state(current, connection)
+            elif move.target == "wait":
+                current.update(state="waiting_input", question_group=uuid.uuid4().hex, run_token="")
+            else:
+                current["stage"] = move.target
+            decision.append(move.target)
+        self._change(job["id"], token, commit)
+        return decision[0]
+
+    async def execute_step(self, job, token):
+        # Compatibility adapter only: old tasks keep their pinned engine.
+        handlers = {"plan": self.plan_stage, "draft": self.draft_stage, "review": self.review_stage,
+                    "revise": self.revise_stage, "supervise": self.supervise_stage}
+        result = await handlers[job["stage"]](job, token)
+        self.commit_stage(job, token, result)
 
     @staticmethod
     def _can_revise(job):
-        return job["mode"] == "generate" and job["revisions"] < 2 and job["calls"] <= 6 and job["elapsed_ms"] < 180000
+        from app.budget import budget_for_job
+
+        return budget_for_job(job).can_revise(job)

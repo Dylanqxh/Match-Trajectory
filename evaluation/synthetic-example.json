@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "dataset_label": "synthetic",
+  "rules_version": "m17-synthetic-engineering-v1",
+  "provider": {
+    "provider": "custom",
+    "base_url": "http://127.0.0.1:12345/v1",
+    "model": "replace-with-fixed-model"
+  },
+  "max_calls": 17,
+  "timeout_seconds": 360,
+  "case_max_calls": 9,
+  "case_timeout_seconds": 180,
+  "cases": [
+    {
+      "id": "synthetic-course-project",
+      "input": {
+        "target_role": "Java 后端",
+        "name": "合成候选人",
+        "contact": "synthetic@example.invalid",
+        "career_stage": "entry",
+        "allow_questions": true,
+        "source_text": "以下是合成工程测试材料，不代表真实个人经历。使用 Java 完成课程预约查询接口，编写6条异常场景测试记录；未上线，没有用户增长或业务收入数据。",
+        "jd": "合成岗位：实现后端接口，编写测试，说明个人贡献与验证边界。"
+      }
+    }
+  ]
+}

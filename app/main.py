@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.budget import DEFAULT_POLICY
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
 from app.jobs import JobStore
@@ -106,11 +107,11 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "milestone": "m1.6", "ai_generation": True, "worker_warning": workflow.service_warning}
+        return {"status": "ok", "milestone": "m1.7", "ai_generation": True, "worker_warning": workflow.service_warning}
 
     @app.get("/api/session")
     def initialize_session():
-        response = JSONResponse({"status": "ready", "milestone": "m1.6"})
+        response = JSONResponse({"status": "ready", "milestone": "m1.7"})
         response.set_cookie("mt_session", session, httponly=True, samesite="strict", path="/")
         return response
 
@@ -238,7 +239,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         try:
             async with workflow.execution_lock:
                 try:
-                    async with asyncio.timeout(20):
+                    async with asyncio.timeout(DEFAULT_POLICY.supervisor_ms / 1000):
                         result = await workflow.client.delegate(config, probe_context())
                 except TimeoutError:
                     raise providers.ProviderError("工具测试超时，可能已计费；未启用智能修正策略") from None

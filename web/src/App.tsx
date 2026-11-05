@@ -238,11 +238,11 @@ export default function App() {
       {jobs.length > 0 && <><div className="nav-heading">生成任务</div><nav aria-label="生成任务">{jobs.map(job => <div className="record-nav-row" key={job.id}><button className={`resume-link ${jobId === job.id ? "active" : ""}`} disabled={interactionLocked}
         onClick={() => showJob(job.id)}><span>{job.target_role}</span><small>{({ queued: "等待执行", running: "正在生成", waiting_input: "等待补充", ready: "已有结果", failed: "可查看或继续", interrupted: "已中断", cancelled: "已取消" } as Record<string, string>)[job.state]}</small></button><button className="delete-record" disabled={interactionLocked} aria-label={`删除生成任务 ${job.target_role}`} onClick={() => void deleteJob(job.id)}>删除</button></div>)}</nav></>}
       <div className="sidebar-bottom"><button disabled={interactionLocked} onClick={() => setSettings(true)}>⚙ 模型连接</button>
-        <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.6 · 人工交付与记录管理</small></div></div>
+        <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.7 · 分阶段生成与可信交付</small></div></div>
     </aside>
     <main className="main-area" inert={resolution ? true : undefined}>
       <header className="topbar"><div><span className="eyebrow">RESUME WORKSPACE</span><h1>简历工作台</h1></div>
-        <span className="stage-chip">生成与交付 · M1.6</span></header>
+        <span className="stage-chip">生成与交付 · M1.7</span></header>
       <div className="feedback" role="status">{interactionLocked ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
       {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}

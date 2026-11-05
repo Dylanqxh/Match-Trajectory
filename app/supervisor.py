@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from app.budget import budget_for_job
 from app.model_client import ModelOutputError
 from app.models import StrictModel
 
@@ -32,7 +33,7 @@ def eligible_issues(job):
 
 def should_supervise(job):
     return (job.get("engine") == "supervisor" and job["mode"] == "generate"
-            and job["calls"] <= 5 and job["elapsed_ms"] < 140000
+            and budget_for_job(job).can_supervise(job)
             and len(eligible_issues(job)) > 1)
 
 
@@ -85,7 +86,9 @@ def supervisor_context(job):
             "选择deliver仅表示交付现有候选及问题，不消除阻断。预算不足或无可修依据时停止。",
             "target_role": job["input"]["target_role"], "candidate": job["draft"],
             "evidence": job["evidence"], "issues": [{"index": i, **job["issues"][i]} for i in indices],
-            "remaining_calls": 8 - job["calls"], "remaining_revisions": 2 - job["revisions"]}
+            "remaining_calls": budget_for_job(job).max_calls - job["calls"],
+            "remaining_revisions": budget_for_job(job).max_revisions - job["revisions"],
+            "_budget_policy": budget_for_job(job).model_dump()}
 
 
 def probe_context():

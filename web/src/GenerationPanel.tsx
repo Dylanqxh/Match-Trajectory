@@ -75,7 +75,8 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       </div>
       {["failed", "interrupted"].includes(job.state) && job.continuation && <p className="fine">{job.continuation.reason}</p>}
       <details className="generation-details"><summary>查看材料依据与执行记录</summary>
-        <p>模型请求 {job.calls} / 8 次；内容修正 {job.revisions} / 2 轮。费用以模型供应商账单为准。</p>
+        <p>模型请求 {job.calls} / {job.budget_policy?.max_calls ?? 8} 次；内容修正 {job.revisions} / {job.budget_policy?.max_revisions ?? 2} 轮。费用以模型供应商账单为准。</p>
+        <p>执行上限 {(job.budget_policy?.total_ms ?? 180000) / 1000} 秒；策略版本 {job.budget_policy?.version || "兼容默认"}。等待回答不计时；次数限制不等于金额上限。</p>
         <p>生成方式：{job.engine === "supervisor" ? "智能修正策略（试用）" : job.engine === "langgraph" ? "分阶段生成" : "兼容流程"}；已保存步骤 {job.step_receipts?.length || 0}。主管请求也计入总次数。</p>
         <p>引用只表示使用了对应用户陈述，不表示系统已客观核实。</p>
         {job.last_diagnostic && <div><strong>上次输出诊断：{({ schema: "字段结构不符合约定", invalid_json: "JSON 格式不完整", empty: "模型返回空白", truncated: "模型输出被截断", incomplete: "模型未完整输出", response_envelope: "响应封装异常", structure: "结构或引用检查未通过" } as Record<string, string>)[job.last_diagnostic.category] || "输出检查未通过"}</strong>

@@ -1,4 +1,5 @@
 
+from app.budget import budget_for_job
 from app.generation_models import (
     AnswerInput,
     Draft,
@@ -118,17 +119,18 @@ class GenerationService:
 
     @staticmethod
     def continuation(job):
+        policy = budget_for_job(job)
         if job["state"] not in ("failed", "interrupted"):
             return {"allowed": False, "reason": "任务当前无需继续"}
-        if job["calls"] >= 8:
-            return {"allowed": False, "reason": "该任务已使用 8 次模型调用，材料与候选保留；请新建任务"}
-        if job["elapsed_ms"] >= 180000:
-            return {"allowed": False, "reason": "该任务累计执行达到 180 秒，材料与候选保留；请新建任务"}
-        if job["stage"] in ("draft", "revise") and (job["calls"] >= 7 or job["elapsed_ms"] >= 165000):
+        if job["calls"] >= policy.max_calls:
+            return {"allowed": False, "reason": f"该任务已使用 {policy.max_calls} 次模型调用，材料与候选保留；请新建任务"}
+        if job["elapsed_ms"] >= policy.total_ms:
+            return {"allowed": False, "reason": f"该任务累计执行达到 {policy.total_ms // 1000} 秒，材料与候选保留；请新建任务"}
+        if job["stage"] in ("draft", "revise") and (job["calls"] >= policy.max_calls - 1 or job["elapsed_ms"] >= policy.total_ms - policy.review_reserve_ms):
             return {"allowed": False, "reason": "剩余预算不足以生成并审阅新正文；已有候选保留，请新建任务或手工核对"}
         key = f"{job['stage']}:{job['revisions']}"
-        if job.get("invalid_outputs", {}).get(key, 0) >= 2 and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
-            return {"allowed": False, "reason": f"当前阶段连续两次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/8 次）。请查看诊断；新建任务前先确认问题已处理。"}
+        if job.get("invalid_outputs", {}).get(key, 0) >= policy.max_invalid_outputs and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
+            return {"allowed": False, "reason": f"当前阶段连续{policy.max_invalid_outputs}次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/{policy.max_calls} 次）。请查看诊断；新建任务前先确认问题已处理。"}
         upgraded = job.get("output_contract_version", "legacy") != OUTPUT_CONTRACT_VERSION
         return {"allowed": True, "reason": "输出校验已更新，可从失败阶段继续，已用次数和耗时不清零" if upgraded else "可从失败阶段继续，已用预算保留"}
 

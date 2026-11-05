@@ -481,9 +481,10 @@ def test_contract_upgrade_allows_explicit_resume_without_resetting_global_budget
 def test_reviewer_receives_trusted_reference_date(tmp_path):
     runner, jobs, _, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
     job = runner.submit(request())
+    jobs.mutate(job["id"], lambda j, _: j.update(created_at="2026-11-04T18:20:00+00:00"))
     asyncio.run(runner.run_one())
-    assert model.calls[-1][1]["reference_date"] == jobs.get(job["id"])["created_at"][:10]
-    assert model.calls[-1][1]["reference_timezone"] == "UTC"
+    assert model.calls[-1][1]["reference_date"] == "2026-11-05"
+    assert model.calls[-1][1]["reference_timezone"] == "Asia/Shanghai"
 
 
 def blocked_resume(tmp_path):

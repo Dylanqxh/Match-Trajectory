@@ -43,11 +43,11 @@ $packageArguments=@('--noconfirm','--clean','--onedir','--name','MatchTrajectory
     '--add-data',("${browserRoot}${separator}runtime-browsers"),$entry)
 python -m PyInstaller @packageArguments
 if ($LASTEXITCODE -ne 0) { throw 'Portable build failed' }
-$buildReport=@{ milestone='M1.5'; cleanMachineVerified=$false; liveProvidersVerified=0; realModelQualityVerified=$false; redistributionLicenseReviewComplete=$false;
+$buildReport=@{ milestone='M1.6'; cleanMachineVerified=$false; liveProvidersVerified=0; realModelQualityVerified=$false; redistributionLicenseReviewComplete=$false;
     note='Local portable probe only; not a publicly validated release.'; builtAtUtc=[DateTime]::UtcNow.ToString('o') }
-$buildReport | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'M15-probe.json') -Encoding utf8
+$buildReport | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'M16-probe.json') -Encoding utf8
 @'
-Match-Trajectory M1.5 本机便携包探针
+Match-Trajectory M1.6 本机便携包探针
 
 双击 MatchTrajectory.exe，浏览器会打开本机工作台。关闭服务窗口可停止服务。
 默认资料目录为程序旁的 data；也可使用 --data-dir 指定可写目录。

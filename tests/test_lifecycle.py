@@ -40,14 +40,20 @@ def test_delete_resume_clears_versions_jobs_exports_and_checkpoint(tmp_path):
 
 def test_deleting_adopted_task_preserves_source_until_resume_is_deleted(tmp_path):
     from app.lifecycle import Lifecycle
-    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS])
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS, PASS])
     job = runner.submit(request())
     asyncio.run(runner.run_one())
     record = runner.adopt(job['id'])
     service = Lifecycle(store, jobs, tmp_path)
     assert service.delete_job(job['id'])['retained_for_resume']
     assert jobs.list() == [] and jobs.get(job['id'])['evidence']
+    retained = jobs.get(job['id'])
+    assert retained['draft'] is None and retained['review'] is None
+    assert 'contact' not in retained['input'] and 'source_text' not in retained['input']
     assert runner.takeover(record.id, 1).ai.manual_takeover
+    review = runner.recheck(record.id, 1, 'review-after-delete')
+    asyncio.run(runner.run_one())
+    assert jobs.get(review['id'])['review']['verdict'] == 'pass'
     service.delete_resume(record.id, 1)
     assert jobs.get(job['id'])['evidence'] == []
 
@@ -173,3 +179,20 @@ def test_export_junction_cannot_delete_files_outside_data_root(tmp_path):
         assert result['cleanup_pending'] and artifact.exists()
     finally:
         os.rmdir(link)
+
+
+def test_deleting_one_resume_preserves_other_resume_history_and_material(tmp_path):
+    from app.lifecycle import Lifecycle
+    runner, jobs, store, _, _ = setup(tmp_path, [PLAN, DRAFT, PASS, PLAN, DRAFT, PASS])
+    first_job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    first = runner.adopt(first_job['id'])
+    second_job = runner.submit(request().model_copy(update={'request_id': 'second-request'}))
+    asyncio.run(runner.run_one())
+    second = runner.adopt(second_job['id'])
+    Lifecycle(store, jobs, tmp_path).delete_resume(first.id, 1)
+    assert [row['id'] for row in store.list()] == [second.id]
+    assert len(store.history(second.id)) == 1
+    assert store.get(second.id).ai.review_status == 'passed'
+    assert [row['id'] for row in jobs.list()] == [second_job['id']]
+    assert jobs.get(second_job['id'])['evidence']

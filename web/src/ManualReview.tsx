@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, GenerationJob, Resume } from "./api";
 
-export function ManualReview({ record, issueIndex, onClose, onSaved }: {
+export function ManualReview({ record, issueIndex, onClose, onSaved, onEdit, onDraft }: {
   record: Resume; issueIndex: number; onClose: () => void; onSaved: (row: Resume) => void;
+  onEdit: (itemId: string) => void; onDraft: () => void;
 }) {
   const [evidence, setEvidence] = useState<GenerationJob["evidence"]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -17,7 +18,7 @@ export function ManualReview({ record, issueIndex, onClose, onSaved }: {
     let active = true;
     const previousFocus = document.activeElement as HTMLElement | null;
     dialog.current?.focus();
-    void api<GenerationJob>(`/api/generation-jobs/${record.ai!.job_id}`).then(job => {
+    void api<Pick<GenerationJob, "evidence">>(`/api/resumes/${record.id}/evidence`).then(job => {
       if (active) { setEvidence(job.evidence); setLoaded(true); }
     }).catch(error => { if (active) setError((error as Error).message); });
     return () => { active = false; previousFocus?.focus(); };
@@ -40,10 +41,10 @@ export function ManualReview({ record, issueIndex, onClose, onSaved }: {
   return <div className="modal-backdrop"><section ref={dialog} tabIndex={-1} className="modal manual-review-modal" role="dialog" aria-modal="true" aria-label="核对审阅问题">
     <button className="close" aria-label="关闭人工核对" disabled={busy} onClick={onClose}>×</button>
     <h2>核对审阅问题</h2>
-    <p>如果原文已支持当前表述，可以选择依据并说明。此操作保存人工核对记录，保留 AI 原始结论；完成后仍需点击“自行核对并接管”。</p>
+    <p>逐项选择适合的处理方式。原文支持时保存人工依据；内容不对时返回编辑修改或删除条目；不确定时先导出草稿。保存后继续下一项，全部处理后请明确确认接管。</p>
     <div className="notice"><strong>AI 提出的问题</strong><p>{issue.message}</p><strong>当前表述</strong><p>{currentText || "当前条目已删除，请关闭并重新载入。"}</p></div>
     <fieldset disabled={busy || !loaded}>
-      <h3>选择支持这段表述的原文</h3>
+      <h3>原文支持：选择依据并保存人工核对</h3>
       <div className="manual-evidence-list">{evidence.map(item => <label className="manual-evidence" key={item.id}>
         <input type="checkbox" aria-label={`选择材料 ${item.id}`} checked={selected.includes(item.id)} onChange={event => setSelected(
           event.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id),
@@ -52,6 +53,9 @@ export function ManualReview({ record, issueIndex, onClose, onSaved }: {
       <label className="checkbox-label"><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)}/>我已核对所选原文支持当前表述</label>
       <button className="primary" disabled={busy || !acknowledged || selected.length === 0 || explanation.trim().length < 10} onClick={() => void save()}>保存人工核对结果</button>
     </fieldset>
+    <div className="button-row"><button className="secondary" disabled={busy} onClick={() => onEdit(issue.item_id)}>内容不对，返回编辑</button>
+      <button className="text-button" disabled={busy} onClick={onDraft}>不确定，先下载 Word 草稿</button></div>
+    <p className="fine">修改后可重新审阅，或依据原文逐项核对。返回编辑和导出草稿均不会将事实问题标记为已解决。</p>
     {error && <p className="error" role="alert">{error}</p>}
   </section></div>;
 }

@@ -34,10 +34,12 @@ class Lifecycle:
             connection.execute(insert(cleanup_rows).values(id=key, data=json.dumps(data)))
 
     def _erase_job(self, connection, job, retained):
-        if not retained:
-            keep = {k: job[k] for k in ('id', 'stage', 'revisions', 'calls', 'elapsed_ms', 'engine', 'engine_version', 'mode', 'created_at') if k in job}
-            job.clear()
-            job.update(keep, input={}, evidence=[], draft=None, review=None, issues=[], adopted_resume_id=None)
+        keep = {k: job[k] for k in ('id', 'stage', 'revisions', 'calls', 'elapsed_ms', 'engine', 'engine_version', 'mode', 'created_at') if k in job}
+        source = {k: v for k, v in job.get('input', {}).items()
+                  if k in ('target_role', 'jd', 'career_stage', 'has_career_gap', 'execution_mode', 'allow_questions')}
+        evidence = job.get('evidence', []) if retained else []
+        job.clear()
+        job.update(keep, input=source if retained else {}, evidence=evidence, draft=None, review=None, issues=[], adopted_resume_id=None)
         job.update(deleted=True, state='cancelled', run_token='', request_started=None, error='记录已删除')
         self.jobs._write(connection, job)
         self._queue(connection, 'job:'+job['id'], {'job_id': job['id']})

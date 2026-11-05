@@ -19,11 +19,16 @@ def phase_key(job):
 
 def prepare_draft(job, output):
     from app.model_client import ModelOutputError, safe_validation_fields
+    from app.resume_layout import arrange_draft_sections
 
     payload = output.model_dump()
     if job['input'].get('education'):
         payload['education'] = [DraftEducation(**row, fact_ids=[e['id'] for e in job['evidence']
             if e['id'].startswith(f"profile-{row['id']}-")]).model_dump() for row in job['input']['education']]
+    from app.gates import polish_draft
+
+    payload = polish_draft(payload, job)
+    payload['sections'] = arrange_draft_sections(payload.get('sections') or [], job['input'].get('jd') or '')
     try:
         return Draft.model_validate(payload)
     except ValidationError as exc:
@@ -64,14 +69,18 @@ def transition(job, result):
         return Transition('done' if output.action == 'deliver' else 'revise', {'repair_decision': output.model_dump()})
     if result.stage == 'review':
         candidate_type = ReviewDraft if job['mode'] == 'recheck' else Draft
-        warnings = validate_quality(candidate_type.model_validate(job['draft']))
+        candidate = candidate_type.model_validate(job['draft'])
+        warnings = validate_quality(candidate)
+        from app.gates import gate_warnings
+
+        editorial = gate_warnings(job, candidate)
         report = editorial_quality(output.quality, warnings, job['evidence'])
         review = output.model_dump()
         if report:
             review['quality'] = report.model_dump()
-        issues = [i.model_dump() for i in [*output.issues, *warnings, *quality_issues(report)]]
+        issues = [i.model_dump() for i in [*output.issues, *warnings, *editorial, *quality_issues(report)]]
         updates = {'review': review, 'issues': issues}
-        editorial_fix = (report and report.status == 'revise') or any(i.repair_action == 'revise' for i in warnings)
+        editorial_fix = (report and report.status == 'revise') or any(i.repair_action == 'revise' for i in [*warnings, *editorial])
         if (output.verdict == 'pass' and not editorial_fix) or not policy.can_revise(job):
             return Transition('done', updates)
         proposed = {**job, **updates}

@@ -24,25 +24,26 @@ def test_structured_content_renders_fixed_education_dates_and_safe_highlights():
     content = ResumeContent.model_validate(structured())
     html = render_html(content)
     assert "教育经历" in html and "虚构学院" in html
-    assert "2025-02" in html and "2025-06" in html
+    assert "2025.02" in html and "2025.06" in html
+    assert "2025-02" not in html
     assert "<strong>查询接口</strong>" in html
     doc = Document(BytesIO(render_docx(content, False, False)))
     text = "\n".join(p.text for p in doc.paragraphs)
-    assert "虚构学院" in text and "2024-09" in text and "2025-06" in text
+    assert "虚构学院" in text and "2024.09" in text and "2025.06" in text
     assert any(r.bold and r.text == "查询接口" for p in doc.paragraphs for r in p.runs)
     assert any("虚构学院" in text for text in expected_texts(content))
 
 
-def test_reverse_chronology_is_stable_with_unknown_dates_and_separate_categories():
-    from app.models import Section
-    from app.resume_layout import ordered_sections
+def test_equal_strength_uses_date_only_as_a_tiebreak_inside_each_block():
+    from app.models import Item, Section
+    from app.resume_layout import arrange_sections
 
-    rows = [Section(id="old", title="旧项目", kind="project", end_date="2023"),
-            Section(id="work", title="工作", kind="work", end_date="2021"),
-            Section(id="unknown", title="未知时间", kind="project"),
-            Section(id="now", title="当前项目", kind="project", end_date="至今"),
-            Section(id="new", title="较新项目", kind="project", end_date="2025-06")]
-    assert [s.id for s in ordered_sections(rows)] == ["now", "work", "new", "old", "unknown"]
+    rows = [Section(id="old", title="旧项目", kind="project", end_date="2023", items=[Item(id="a", text="完成接口")]),
+            Section(id="work", title="工作", kind="work", end_date="2021", items=[Item(id="b", text="完成交接")]),
+            Section(id="unknown", title="未知时间", kind="project", items=[Item(id="c", text="完成记录")]),
+            Section(id="now", title="当前项目", kind="project", end_date="至今", items=[Item(id="d", text="完成接口")]),
+            Section(id="new", title="较新项目", kind="project", end_date="2025-06", items=[Item(id="e", text="完成接口")])]
+    assert [s.id for s in arrange_sections(rows)] == ["now", "new", "old", "unknown", "work"]
 
 
 @pytest.mark.parametrize("change", [{"start_date": "2025-13"}, {"start_date": "2025-09", "end_date": "2024-10"},
@@ -156,5 +157,6 @@ def test_adjacent_projects_share_one_category_heading():
     second = {**data["sections"][0], "id": "p2", "title": "另一个项目", "items": [{"id": "i2", "text": "整理测试记录"}]}
     data["sections"].append(second)
     content = ResumeContent.model_validate(data)
-    assert render_html(content).count("<h2>项目经历</h2>") == 1
-    assert sum(p.text == "项目经历" for p in Document(BytesIO(render_docx(content, False, False))).paragraphs) == 1
+    assert render_html(content).count("<h2>项目</h2>") == 1
+    assert "<h2>工作 / 实习经历</h2>" not in render_html(content)
+    assert sum(p.text == "项目" for p in Document(BytesIO(render_docx(content, False, False))).paragraphs) == 1

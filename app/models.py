@@ -68,7 +68,7 @@ class Item(Highlighted):
 class Section(Period):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
     title: str = Field(min_length=1, max_length=60)
-    kind: Literal["project", "work", "research", "skills", "other"] = "other"
+    kind: Literal["project", "work", "research", "skills", "campus", "other"] = "other"
     organization: str = Field(default="", max_length=120)
     role: str = Field(default="", max_length=80)
     items: list[Item] = Field(default_factory=list, max_length=30)

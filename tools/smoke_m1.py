@@ -182,7 +182,7 @@ def run(output, executable=None):
                     download.value.save_as(output / filename)
                 structured_doc = Document(output / "structured.docx")
                 structured_text = "\n".join(p.text for p in structured_doc.paragraphs)
-                assert "虚构测试学院" in structured_text and "2024-09" in structured_text
+                assert "虚构测试学院" in structured_text and "2024.09" in structured_text
                 assert structured_text.index("近期检索项目") < structured_text.index("早期查询项目")
                 assert any(r.bold and r.text == "评估脚本" for p in structured_doc.paragraphs for r in p.runs)
                 with pdfium.PdfDocument(output / "structured.pdf") as pdf:

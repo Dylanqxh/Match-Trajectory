@@ -153,8 +153,11 @@ class GenerationService:
             inputs = job["input"]
             draft = Draft.model_validate(job["draft"]) if job["draft"] else None
             fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
-            content = draft.to_content(inputs["name"], inputs["contact"], inputs["target_role"], fixed or None) if draft else ResumeContent(
-                name=inputs["name"], contact=inputs["contact"], target_role=inputs["target_role"], education=fixed)
+            from app.gates import header_contact
+
+            contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
+            content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
+                name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
             status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
                 i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
             info = AIInfo(job_id=job_id, review_job_id=job_id, review_status=status, content_hash=resume_hash(content),
@@ -197,8 +200,11 @@ class GenerationService:
             original = self.jobs._get(connection, record.ai.job_id)
             if original["evidence"]:
                 draft = content_draft(record.content, original["evidence"], record.ai.source_map)
+                from app.gates import blocking_gates
                 from app.generation_models import Evidence
-                issues = validate_draft(draft, [Evidence.model_validate(e) for e in original["evidence"]])
+
+                issues = [*validate_draft(draft, [Evidence.model_validate(e) for e in original["evidence"]]),
+                          *blocking_gates({**original, "mode": "recheck"}, draft)]
                 if issues:
                     raise Conflict("程序仍发现事实风险，请修正或补充原材料后重新生成")
             info = record.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": True,

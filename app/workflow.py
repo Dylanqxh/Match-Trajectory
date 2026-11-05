@@ -105,7 +105,7 @@ class Workflow(GenerationService):
         if stage == "supervise":
             from app.supervisor import supervisor_context
 
-            return supervisor_context(job)
+            return self._without_header_fields(supervisor_context(job), job)
         reference = datetime.fromisoformat(job["created_at"]).astimezone(timezone(timedelta(hours=8)))
         context = {"instructions": job["skill"].get("stage_instructions", {}).get(stage, job["skill"]["instructions"]), "target_role": job["input"]["target_role"],
                    "reference_date": reference.date().isoformat(), "reference_timezone": "Asia/Shanghai",
@@ -122,6 +122,12 @@ class Workflow(GenerationService):
             context["question_budget"] = policy.question_limit if job["input"]["allow_questions"] and not job["answered"] else 0
         if stage in ("draft", "revise"):
             context["plan"] = job["plan"]
+            if job.get("answered") and not job.get("answer_context"):
+                context["followup_skipped"] = True
+                context["instructions"] += ("\n用户跳过了追问。有材料的经历仍要写全，获奖、获评和原文中的数量结果不能删。"
+                                            "不要输出没有材料的板块，也不要给空板块加缺口标记。"
+                                            "某一条已经写了、但缺关键事实时，在该条末尾加【待补充：…】。"
+                                            "同一事实出现两个口径时不要选边，加【待确认：…】。")
         if stage in ("review", "revise"):
             context["candidate"] = job["draft"]
         if stage == "revise":
@@ -134,6 +140,36 @@ class Workflow(GenerationService):
                 context["instructions"] += "\n仅修改allowed_change_ids范围；其余字段、段落及标识原样保留。document代表整篇。"
         if job.get("feedback_key") == f"{stage}:{job['revisions']}" and job.get("last_diagnostic"):
             context["validation_feedback"] = job["last_diagnostic"]
+        return self._without_header_fields(context, job)
+
+    @staticmethod
+    def _without_header_fields(context, job):
+        """Contact and school must not change plan, draft, review, or revise prompts."""
+        import copy
+        import re
+
+        context = copy.deepcopy(context)
+        schools = [row.get("school") or "" for row in (job.get("input") or {}).get("education") or [] if row.get("school")]
+        contact = (job.get("input") or {}).get("contact") or ""
+
+        def blank_school(rows):
+            for row in rows or []:
+                if isinstance(row, dict) and "school" in row:
+                    row["school"] = ""
+
+        blank_school(context.get("fixed_education"))
+        candidate = context.get("candidate")
+        if isinstance(candidate, dict):
+            blank_school(candidate.get("education"))
+        for item in context.get("evidence") or []:
+            if not str(item.get("id", "")).startswith("profile-") or "text" not in item:
+                continue
+            text = item["text"]
+            for school in schools:
+                text = text.replace(school, " ")
+            if contact:
+                text = text.replace(contact, " ")
+            item["text"] = re.sub(r"\s+", " ", text).strip()
         return context
 
     async def _request(self, job, token, schema):
@@ -290,7 +326,10 @@ class Workflow(GenerationService):
         from app.phases import StageResult, phase_key
 
         candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
-        checks = validate_draft(candidate_type.model_validate(job["draft"]), [Evidence.model_validate(e) for e in job["evidence"]])
+        candidate = candidate_type.model_validate(job["draft"])
+        from app.gates import blocking_gates
+
+        checks = [*validate_draft(candidate, [Evidence.model_validate(e) for e in job["evidence"]]), *blocking_gates(job, candidate)]
         if checks:
             return StageResult("review", phase_key(job), "program_issues", [i.model_dump() for i in checks])
         schema = WritingReview if job["skill"].get("stage_instructions") else Review

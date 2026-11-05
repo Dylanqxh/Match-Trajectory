@@ -98,6 +98,7 @@ class Draft(StrictModel):
 
 class ReviewClaim(Claim):
     text: str = Field(min_length=1, max_length=4000)
+    fact_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ReviewSummaryClaim(ReviewClaim):
@@ -191,6 +192,7 @@ class GenerationInput(StrictModel):
     name: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
     target_role: str = Field(min_length=1, max_length=80)
+    role_direction: Literal["product", "backend", "other"] | None = None
     source_text: str = Field(default="", max_length=20000)
     jd: str = Field(default="", max_length=8000)
     allow_questions: bool = True

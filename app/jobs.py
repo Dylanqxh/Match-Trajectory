@@ -48,11 +48,13 @@ class JobStore:
                     raise Conflict("该请求对应的任务已删除，请新建任务")
                 if existing["input_hash"] != digest:
                     # Old callers retry the same request after an additive API
-                    # default was introduced. Keep its original pinned engine.
-                    additive_default = ("execution_mode" not in saved["input"]
-                                        and inputs.get("execution_mode") == "langgraph"
-                                        and fingerprint({k: v for k, v in inputs.items() if k != "execution_mode"}) == existing["input_hash"])
-                    if not additive_default:
+                    # default was introduced. Keep its original pinned engine and skill.
+                    comparable = dict(inputs)
+                    if "role_direction" not in saved["input"] and comparable.get("role_direction") is None:
+                        comparable.pop("role_direction", None)
+                    if "execution_mode" not in saved["input"] and comparable.get("execution_mode") == "langgraph":
+                        comparable.pop("execution_mode", None)
+                    if fingerprint(comparable) != existing["input_hash"]:
                         raise Conflict("相同请求标识对应不同内容，请重新发起任务")
                 return saved
             job = {"id": uuid.uuid4().hex, "input": inputs, "config_revision": config_revision, "provider": provider,

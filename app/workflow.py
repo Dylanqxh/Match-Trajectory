@@ -89,6 +89,18 @@ class Workflow(GenerationService):
 
         return self.jobs.mutate(job_id, guarded)
 
+    def _evidence_for(self, job, stage):
+        evidence = job["evidence"]
+        if stage not in ("draft", "revise"):
+            return evidence
+        plan = job.get("plan") or {}
+        selected = plan.get("selected_fact_ids") if isinstance(plan, dict) else []
+        if not isinstance(selected, list):
+            selected = []
+        answers = [fact_id for row in job.get("answer_context") or [] for fact_id in (row.get("fact_ids") or [])]
+        allowed = {*selected, *answers, *(item["id"] for item in evidence if str(item.get("id", "")).startswith("profile-"))}
+        return [item for item in evidence if item["id"] in allowed]
+
     def _context(self, job, stage):
         if stage == "supervise":
             from app.supervisor import supervisor_context
@@ -99,7 +111,7 @@ class Workflow(GenerationService):
                    "reference_date": reference.date().isoformat(), "reference_timezone": "Asia/Shanghai",
                    "target_basis": {"type": "specific_jd" if job["input"]["jd"] else "maintained_general_profile",
                                     "jd": job["input"]["jd"], "role": job["skill"]["role"]},
-                   "evidence": job["evidence"], "answer_context": job.get("answer_context", [])}
+                   "evidence": self._evidence_for(job, stage), "answer_context": job.get("answer_context", [])}
         policy = budget_for_job(job)
         context["_budget_policy"] = policy.model_dump()
         context["fixed_education"] = job["input"].get("education", [])

@@ -107,12 +107,11 @@ def test_dates_cannot_be_recombined_from_separate_source_periods():
     assert any(i.item_id == "p1" and i.code == "unsupported" for i in issues)
 
 
-@pytest.mark.parametrize("target,expected", [("Agent 应用开发实习", "algorithm"), ("RAG 工程师", "algorithm"),
-                                            ("大模型产品经理", "product")])
-def test_specialized_role_routing_is_about_the_job_not_only_technology_words(target, expected):
+@pytest.mark.parametrize("target", ["Agent 应用开发实习", "RAG 工程师", "大模型产品经理", "Java 开发"])
+def test_job_title_text_does_not_select_a_specialty(target):
     from app.skill import load_skill
 
-    assert load_skill(target).role == expected
+    assert load_skill(target).role == "general"
 
 
 def test_empty_education_is_rejected_and_legacy_content_still_loads():

@@ -1,15 +1,13 @@
 import pytest
 
 
-@pytest.mark.parametrize(("role", "expected"), [
-    ("Java 开发", "backend"), ("推荐算法", "algorithm"), ("NLP 算法", "algorithm"),
-    ("计算机视觉", "algorithm"), ("数据分析师", "data-analysis"), ("产品经理", "product"),
-    ("用户运营", "operations"), ("法务", "general"),
+@pytest.mark.parametrize(("direction", "expected"), [
+    ("product", "product"), ("backend", "backend"), ("other", "general"), (None, "general"),
 ])
-def test_role_rules_are_selected_without_becoming_personal_facts(role, expected):
+def test_role_rules_are_selected_without_becoming_personal_facts(direction, expected):
     from app.skill import load_skill
 
-    skill = load_skill(role)
+    skill = load_skill("任意岗位标题", role_direction=direction)
     assert skill.role == expected
     assert "不得" in skill.instructions
     assert "个人事实" in skill.instructions

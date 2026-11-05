@@ -17,6 +17,7 @@ export default function App() {
   const [jd, setJd] = useState("");
   const [sendMaterials, setSendMaterials] = useState(false);
   const [allowQuestions, setAllowQuestions] = useState(true);
+  const [roleDirection, setRoleDirection] = useState<"product" | "backend" | "other">("other");
   const [careerStage, setCareerStage] = useState("unspecified");
   const [careerGap, setCareerGap] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -115,6 +116,7 @@ export default function App() {
       if (!content.name.trim() || !content.contact.trim() || !content.target_role.trim()) throw new Error("请先填写姓名、联系方式和目标岗位");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
       const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
+        role_direction: roleDirection,
         education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap,
         execution_mode: useSupervisor ? "supervisor" : "langgraph", allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
@@ -258,7 +260,9 @@ export default function App() {
         </div>
         <form className="material-card" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
           <h3>开始整理你的简历</h3><label>姓名<input required value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="如何称呼你"/></label>
+          <label>简历方向<select aria-label="简历方向" value={roleDirection} onChange={e => setRoleDirection(e.target.value as "product" | "backend" | "other")}><option value="product">产品经理</option><option value="backend">后端</option><option value="other">其他（通用规则）</option></select></label>
           <label>目标岗位<input required list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如 Java 后端、算法、产品经理"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+          <p className="fine">规则只按上面的方向加载，不会从岗位名称猜测。产品经理和后端使用专项规则，其他方向使用通用规则。</p>
           <label>联系方式<input required value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="必填：手机号或邮箱，可用求职专用联系方式"/></label>
           <p className="fine">姓名、联系方式和目标岗位必填；学校与经历时间按事实填写，未知留空。</p>
           <details><summary>求职背景（可选，用于调整写法）</summary>

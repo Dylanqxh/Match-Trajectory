@@ -21,13 +21,19 @@ from app.store import Conflict, ResumeStore
 def content_draft(content, evidence, source_map) -> ReviewDraft:
     refs = [e["id"] for e in evidence]
 
+    def cited(item_id):
+        # A stored empty list means "no citation", not "every evidence id".
+        if item_id in source_map:
+            return list(source_map[item_id] or [])
+        return list(refs)
+
     def claim(item_id, text, highlights=None):
         model = ReviewSummaryClaim if item_id == "__summary" else ReviewClaim
-        return model(id=item_id, text=text, highlights=highlights or [], fact_ids=source_map.get(item_id) or refs)
+        return model(id=item_id, text=text, highlights=highlights or [], fact_ids=cited(item_id))
 
     return ReviewDraft(summary=claim("__summary", content.summary) if content.summary else None,
-                       education=[DraftEducation(**e.model_dump(), fact_ids=source_map.get(e.id) or refs) for e in content.education],
-                       sections=[ReviewSection(**s.model_dump(exclude={"items"}), fact_ids=source_map.get(s.id) or refs,
+                       education=[DraftEducation(**e.model_dump(), fact_ids=cited(e.id)) for e in content.education],
+                       sections=[ReviewSection(**s.model_dump(exclude={"items"}), fact_ids=cited(s.id),
                                                items=[claim(i.id, i.text, i.highlights) for i in s.items])
                                  for s in content.sections])
 
@@ -47,7 +53,7 @@ class GenerationService:
         if inputs.source_text and (not inputs.name or not inputs.contact):
             raise ValueError("请先填写姓名、联系方式和目标岗位；也可以使用化名及求职专用邮箱")
         config = self.registry.get(self.registry.current) if inputs.source_text else None
-        skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap)
+        skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap, inputs.role_direction)
         extra = None if inputs.source_text else {"state": "ready", "framework": True,
                                                 "error": "当前只有目标，没有个人材料。请补充课程、实践、作品或工作片段后重新生成。"}
         evidence = [e.model_dump() for e in build_evidence(inputs.source_text)]
@@ -172,7 +178,8 @@ class GenerationService:
         config = self.registry.get(self.registry.current)
         inputs = {**original["input"], "request_id": request_id, "target_role": record.content.target_role,
                   "review_resume_id": resume_id, "base_revision": revision}
-        skill = load_skill(record.content.target_role, inputs.get("career_stage", "unspecified"), inputs.get("has_career_gap", False))
+        skill = load_skill(record.content.target_role, inputs.get("career_stage", "unspecified"), inputs.get("has_career_gap", False),
+                           pinned_role=original.get("skill", {}).get("role"))
         job = self.jobs.create(inputs, self.registry.current, self.registry.describe(config), skill,
                                original["evidence"], mode="recheck", extra={"stage": "review", "draft": draft.model_dump(),
                                "answer_context": original.get("answer_context", []), "target_hash": resume_hash(record.content)})

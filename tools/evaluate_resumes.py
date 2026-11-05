@@ -167,7 +167,7 @@ async def evaluate(manifest, output, *, run=False, transport=None):
     planned = [{"case_id": case["id"], "mode": mode} for case in data["cases"] for mode in ("langgraph", "supervisor")]
     code_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((ROOT / "app").glob("*.py"))}
     skills = {case["id"]: asdict(load_skill(case["input"]["target_role"], case["input"].get("career_stage", "unspecified"),
-                                             case["input"].get("has_career_gap", False))) for case in data["cases"]}
+                                             case["input"].get("has_career_gap", False), case["input"].get("role_direction"))) for case in data["cases"]}
     frozen = {"manifest": data, "manifest_sha256": digest(data), "output_contract_version": OUTPUT_CONTRACT_VERSION,
               "app_sha256": code_hashes, "skills": skills, "skill_sha256": digest(skills),
               "question_policy": "skip_once", "order": "case_then_langgraph_then_supervisor", "resume_supported": False}

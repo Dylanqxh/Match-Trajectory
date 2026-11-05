@@ -16,7 +16,7 @@ def quality(status="ready"):
 def test_runtime_has_phase_routes_and_freezes_selected_resources():
     from app.skill import load_skill
 
-    bundle = load_skill("Java 后端", career_stage="transition", has_career_gap=True)
+    bundle = load_skill("Java 后端", career_stage="transition", has_career_gap=True, role_direction="backend")
     assert "references/candidates/transition.md" in bundle.resources
     assert "references/candidates/returning.md" in bundle.resources
     assert "references/roles/backend.md" in bundle.resources
@@ -26,7 +26,7 @@ def test_runtime_has_phase_routes_and_freezes_selected_resources():
     assert "references/quality-rubric.md" in bundle.stage_resources["review"]
     assert "平庸" in bundle.stage_instructions["draft"]
     assert "个人事实" in bundle.stage_instructions["draft"]
-    assert bundle.version != load_skill("Java 后端").version
+    assert bundle.version != load_skill("Java 后端", role_direction="backend").version
 
 
 def test_examples_cover_all_roles_without_publishing_evaluation_inputs_as_prompts():

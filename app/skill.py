@@ -7,15 +7,12 @@ from pathlib import Path
 
 from app.generation_models import Draft, Evidence, Issue
 
-ROLE_WORDS = {
-    "algorithm": ("算法", "nlp", "机器学习", "深度学习", "计算机视觉", "推荐", "大模型", "agent", "rag", "智能体", "llm"),
-    "data-analysis": ("数据分析", "商业分析", "bi分析", "数分"),
-    "product": ("产品", "product manager"),
-    "operations": ("运营", "增长", "社区", "内容"),
-    "backend": ("后端", "后台", "java", "golang", "服务端", "研发", "开发"),
-}
+STORED_ROLES = ("product", "backend", "algorithm", "data-analysis", "operations", "general")
 TECHNOLOGIES = ("Java", "Python", "Redis", "MySQL", "PostgreSQL", "Kafka", "Spring", "PyTorch", "TensorFlow",
                 "Kubernetes", "Docker", "SQL", "Spark", "Hadoop", "Excel", "Tableau", "Figma", "Axure", "C++", "C#")
+PROJECT_LABEL = re.compile(r"项目(?:[0-9A-Za-z]+|[\u4e00-\u9fff]{1,8}(?=[：:，,。；;\s]|$))")
+NUMERIC = re.compile(r"\d+(?:[.,]\d+)*(?:\s*(?:%|％|万|亿|年|个月|月|天|小时|人|次|条|倍|ms|秒|个|GB|MB|QPS))?", re.IGNORECASE)
+ATTRIBUTION = ("主导", "精通", "负责人", "独立负责", "从零搭建", "牵头")
 
 
 @dataclass(frozen=True)
@@ -28,9 +25,21 @@ class SkillBundle:
     stage_instructions: dict[str, str] = field(default_factory=dict)
 
 
-def load_skill(target_role: str, career_stage="unspecified", has_career_gap=False) -> SkillBundle:
-    order = ("product", "operations", "data-analysis", "algorithm", "backend")
-    role = next((key for key in order if any(word in target_role.lower() for word in ROLE_WORDS[key])), "general")
+def load_skill(target_role: str, career_stage="unspecified", has_career_gap=False, role_direction=None, *, pinned_role=None) -> SkillBundle:
+    """Load rules for an explicit direction. Job-title text is not classified.
+
+    ``pinned_role`` keeps the snapshot already stored on an older task, including
+    directions that new tasks can no longer select.
+    """
+    del target_role
+    if pinned_role in STORED_ROLES:
+        role = pinned_role
+    elif role_direction == "product":
+        role = "product"
+    elif role_direction == "backend":
+        role = "backend"
+    else:
+        role = "general"
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "skills" / "resume-writing"
     base = ["SKILL.md", "references/contract.md", "references/evidence/common.md", f"references/roles/{role}.md", "references/candidates/common.md"]
     candidate = {"entry": "entry", "experienced": "experienced", "transition": "transition"}.get(career_stage)
@@ -53,12 +62,24 @@ def load_skill(target_role: str, career_stage="unspecified", has_career_gap=Fals
     return SkillBundle(role, stage_instructions["draft"], version, resources, stage_resources, stage_instructions)
 
 
+def _project_boundary(window: str) -> int | None:
+    labels = list(PROJECT_LABEL.finditer(window))
+    if len(labels) < 2 or labels[1].start() <= 0:
+        return None
+    second = labels[1].start()
+    separator = max(window.rfind("\n", 0, second), window.rfind("；", 0, second), window.rfind(";", 0, second), window.rfind("。", 0, second))
+    return separator + 1 if separator > 0 else second
+
+
 def build_evidence(text: str, prefix: str = "e") -> list[Evidence]:
     result = []
     cursor = 0
     while cursor < len(text):
         end = min(cursor + 1600, len(text))
-        if end < len(text):
+        boundary = _project_boundary(text[cursor:end])
+        if boundary and cursor + boundary < len(text):
+            end = cursor + boundary
+        elif end < len(text):
             newline = text.rfind("\n", cursor + 800, end)
             if newline >= 0:
                 end = newline + 1
@@ -72,13 +93,21 @@ def build_evidence(text: str, prefix: str = "e") -> list[Evidence]:
 
 
 def normalize_source_dates(text):
+    def two_digit_year(match):
+        year, month = int(match.group(1)), int(match.group(2))
+        if not 1 <= month <= 12:
+            return match.group(0)
+        full = 2000 + year if year <= 39 else 1900 + year
+        return f"{full}-{month:02d}"
+
+    text = re.sub(r"(?<!\d)(\d{2})\s*年\s*(\d{1,2})\s*月", two_digit_year, text)
     text = re.sub(r"(?<!\d)((?:19|20|21)\d{2})\s*[./年-]\s*(\d{1,2})\s*月?", lambda m: f"{m[1]}-{int(m[2]):02d}", text)
     return re.sub(r"(?<!\d)((?:19|20|21)\d{2})\s*年", r"\1", text)
 
 
 def canonical_quantity(text):
     """Normalize spelling, preserving exact digits, magnitude and units."""
-    value = re.sub(r"\s", "", text)
+    value = re.sub(r"\s", "", text).replace("％", "%")
     match = re.fullmatch(r"([\d.,]+)(.*)", value)
     number, unit = match.groups()
     if ',' in number:
@@ -93,10 +122,40 @@ def canonical_quantity(text):
     return number + ('.' + fraction if dot and fraction else '') + unit
 
 
+def _clauses(text):
+    pieces = re.split(r"[。；;\n]+", text)
+    result = []
+    for piece in pieces:
+        if len(set(PROJECT_LABEL.findall(piece))) >= 2:
+            result.extend(re.split(r"(?<!\d),(?!\d)|，", piece))
+        else:
+            result.append(piece)
+    return [piece.strip() for piece in result if piece.strip()]
+
+
+def _quantities(text):
+    return {canonical_quantity(token) for token in NUMERIC.findall(normalize_source_dates(text))}
+
+
+def _moved_across_projects(claim, source):
+    """A number that exists only beside a different named project is unsupported."""
+    source_clauses = _clauses(source)
+    for clause in _clauses(claim):
+        labels = set(PROJECT_LABEL.findall(clause))
+        if not labels:
+            continue
+        for number in _quantities(clause):
+            owners = [set(PROJECT_LABEL.findall(row)) for row in source_clauses if number in _quantities(row)]
+            if not owners or any(labels & owner for owner in owners):
+                continue
+            if set().union(*owners).isdisjoint(labels):
+                return True
+    return False
+
+
 def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
     sources = {e.id: e.text for e in evidence}
     issues = []
-    numeric = re.compile(r"\d+(?:[.,]\d+)*(?:\s*(?:%|％|万|亿|年|个月|月|天|小时|人|次|条|倍|ms|秒|个|GB|MB|QPS))?", re.IGNORECASE)
     claims = draft.claims() + draft.metadata_claims(list(sources)) if sources else draft.claims()
     for claim in claims:
         def add(code, message, item_id=claim.id):
@@ -106,15 +165,21 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
             add("reference", "段落引用了不存在的材料，不能视为有事实依据。")
             continue
         source = "\n".join(sources[ref] for ref in claim.fact_ids)
-        source_numbers = {canonical_quantity(n) for n in numeric.findall(normalize_source_dates(source))}
-        if any(canonical_quantity(n) not in source_numbers for n in numeric.findall(normalize_source_dates(claim.text))):
+        source_numbers = _quantities(source)
+        if any(canonical_quantity(n) not in source_numbers for n in NUMERIC.findall(normalize_source_dates(claim.text))):
             add("unsupported", "段落出现了引用原文中没有的数字或数量口径，请删除或补充依据。")
+        elif _moved_across_projects(claim.text, source):
+            add("unsupported", "数字被挪到了另一个项目上，请改回原文所属项目或删除。")
         for technology in TECHNOLOGIES:
             pattern = r"(?<![A-Za-z])" + re.escape(technology) + r"(?![A-Za-z])"
             if re.search(pattern, claim.text, re.IGNORECASE) and not re.search(pattern, source, re.IGNORECASE):
                 add("unsupported", f"{technology} 未在引用材料中出现，不能从岗位要求推断为个人技能。")
-        if any(word in claim.text and word not in source for word in ("主导", "精通", "负责人", "独立负责", "从零搭建")):
+        if any(word in claim.text and word not in source for word in ATTRIBUTION):
             add("attribution", "责任或熟练程度比引用材料更强，需要核对个人范围。")
+        if "数倍" in claim.text and "数倍" not in source and not re.search(r"\d+(?:\.\d+)?\s*倍", source):
+            issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“数倍”这类定性夸大未在引用材料中出现，请改回原文口径。"))
+        if "显著提升" in claim.text and "显著提升" not in source:
+            issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“显著提升”未在引用材料中出现，请改回原文口径。"))
         boundaries = [(r"未上线|没有上线|仅离线", r"已上线|上线运行|生产部署"),
                       (r"在投|未发表|尚未发表", r"已发表|正式发表")]
         if any(re.search(negative, source) and re.search(positive, claim.text) for negative, positive in boundaries):

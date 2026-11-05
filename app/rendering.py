@@ -9,9 +9,10 @@ from pathlib import Path
 from app.models import ResumeContent
 from app.resume_layout import (
     date_key,
+    display_period,
+    display_text,
     education_text,
     grouped_blocks,
-    period_text,
     section_text,
     text_runs,
 )
@@ -23,10 +24,11 @@ def font_path() -> Path:
 
 
 def expected_texts(content: ResumeContent) -> list[str]:
-    return [value for value in [content.name, content.target_role, content.contact, content.summary,
-            *[value for row in content.education for value in (row.school, row.degree, row.major, row.start_date, row.end_date)],
-            *[value for section in content.sections for value in [section.title, section.organization, section.role,
-               section.start_date, section.end_date, *[item.text for item in section.items]]]] if value]
+    values = [content.name, content.target_role, content.contact, content.summary,
+              *[value for row in content.education for value in (row.school, row.degree, row.major, row.start_date, row.end_date)],
+              *[value for section in content.sections for value in [section.title, section.organization, section.role,
+                 section.start_date, section.end_date, *[item.text for item in section.items]]]]
+    return [display_text(value) for value in values if value]
 
 
 def marker(demo: bool, draft: bool) -> str:
@@ -35,9 +37,9 @@ def marker(demo: bool, draft: bool) -> str:
 
 def _section_body(section, esc, rich, show_title: bool) -> str:
     metadata = ""
-    if show_title or section.organization or section.role or period_text(section):
+    if show_title or section.organization or section.role or display_period(section):
         metadata = (f'<div class="experience-heading"><strong>{esc(section_text(section))}</strong>'
-                    f'<span>{esc(period_text(section))}</span></div>')
+                    f'<span>{esc(display_period(section))}</span></div>')
     return metadata + '<ul>' + ''.join(f'<li>{rich(item)}</li>' for item in section.items) + '</ul>'
 
 
@@ -45,10 +47,12 @@ def render_html(content: ResumeContent, demo: bool = False, draft: bool = False,
     esc = html.escape
     notice = marker(demo, draft)
     def rich(item):
-        return "".join(f"<strong>{esc(text)}</strong>" if bold else esc(text) for text, bold in text_runs(item.text, item.highlights))
+        text = display_text(item.text)
+        highlights = [display_text(phrase) for phrase in item.highlights]
+        return "".join(f"<strong>{esc(part)}</strong>" if bold else esc(part) for part, bold in text_runs(text, highlights))
 
     education_rows = ''.join(
-        f'<div class="experience-heading"><strong>{esc(education_text(row))}</strong><span>{esc(period_text(row))}</span></div>'
+        f'<div class="experience-heading"><strong>{esc(education_text(row))}</strong><span>{esc(display_period(row))}</span></div>'
         for row in sorted(content.education, key=date_key, reverse=True))
     body_blocks = []
     grouped = grouped_blocks(content.sections)
@@ -64,7 +68,7 @@ def render_html(content: ResumeContent, demo: bool = False, draft: bool = False,
         parts = [f'<h2>{esc(label)}</h2>']
         for section in rows:
             show_title = section.title not in ("", label)
-            parts.append(_section_body(section, esc, rich, show_title=show_title or section.organization or section.role or period_text(section)))
+            parts.append(_section_body(section, esc, rich, show_title=show_title or section.organization or section.role or display_period(section)))
         body_blocks.append('<section>' + ''.join(parts) + '</section>')
     sections = ''.join(body_blocks)
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
@@ -132,13 +136,15 @@ def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
     if content.education or education_extra:
         heading("教育经历")
         for row in sorted(content.education, key=date_key, reverse=True):
-            dated_heading(education_text(row), period_text(row))
+            dated_heading(education_text(row), display_period(row))
         for block in education_extra:
             if block.title not in ("", "教育经历"):
-                dated_heading(section_text(block), period_text(block))
+                dated_heading(section_text(block), display_period(block))
             for item in block.items:
                 paragraph = doc.add_paragraph(style="List Bullet")
-                for text, bold in text_runs(item.text, item.highlights):
+                shown = display_text(item.text)
+                highlights = [display_text(phrase) for phrase in item.highlights]
+                for text, bold in text_runs(shown, highlights):
                     paragraph.add_run(text).bold = bold
     if content.summary:
         doc.add_paragraph(content.summary)
@@ -147,11 +153,13 @@ def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
             continue
         heading(label)
         for block in rows:
-            if block.title not in ("", label) or block.organization or block.role or period_text(block):
-                dated_heading(section_text(block), period_text(block))
+            if block.title not in ("", label) or block.organization or block.role or display_period(block):
+                dated_heading(section_text(block), display_period(block))
             for item in block.items:
                 paragraph = doc.add_paragraph(style="List Bullet")
-                for text, bold in text_runs(item.text, item.highlights):
+                shown = display_text(item.text)
+                highlights = [display_text(phrase) for phrase in item.highlights]
+                for text, bold in text_runs(shown, highlights):
                     paragraph.add_run(text).bold = bold
     doc.core_properties.comments = "手工核对版本，未经 AI 审阅。" + marker(demo, draft)
     result = BytesIO()

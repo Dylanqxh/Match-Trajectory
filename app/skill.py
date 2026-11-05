@@ -154,6 +154,8 @@ def _moved_across_projects(claim, source):
 
 
 def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
+    from app.gates import ungrounded_familiarity
+
     sources = {e.id: e.text for e in evidence}
     issues = []
     claims = draft.claims() + draft.metadata_claims(list(sources)) if sources else draft.claims()
@@ -183,6 +185,9 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
                 break
         if any(word in claim.text and word not in source for word in ATTRIBUTION):
             add("attribution", "责任或熟练程度比引用材料更强，需要核对个人范围。")
+        missing_skill = ungrounded_familiarity(claim.text, source)
+        if missing_skill:
+            add("unsupported", f"「{missing_skill}」没有出现在引用材料里，不能写成已熟悉或已掌握的技能。")
         for technology in TECHNOLOGIES:
             familiar = re.compile(rf"(熟悉|精通).{{0,8}}{re.escape(technology)}|{re.escape(technology)}.{{0,8}}(熟悉|精通)", re.IGNORECASE)
             aware = re.compile(rf"了解.{{0,12}}{re.escape(technology)}|{re.escape(technology)}.{{0,12}}了解", re.IGNORECASE)

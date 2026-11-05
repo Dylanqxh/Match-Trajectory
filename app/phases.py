@@ -25,6 +25,9 @@ def prepare_draft(job, output):
     if job['input'].get('education'):
         payload['education'] = [DraftEducation(**row, fact_ids=[e['id'] for e in job['evidence']
             if e['id'].startswith(f"profile-{row['id']}-")]).model_dump() for row in job['input']['education']]
+    from app.gates import polish_draft
+
+    payload = polish_draft(payload, job)
     payload['sections'] = arrange_draft_sections(payload.get('sections') or [], job['input'].get('jd') or '')
     try:
         return Draft.model_validate(payload)

@@ -3,6 +3,7 @@ import re
 
 from app.generation_models import Issue
 from app.resume_layout import CANONICAL_KINDS, section_blob
+from app.skill import TECHNOLOGIES
 
 # Older tasks and hand-edited drafts used these labels with kind "other".
 GENERIC_BLOCK_TITLES = {
@@ -10,7 +11,6 @@ GENERIC_BLOCK_TITLES = {
     "工作 / 实习经历", "工作／实习经历", "工作／实习", "实习",
     "校园与荣誉", "教育经历", "教育背景",
 }
-from app.skill import TECHNOLOGIES
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -23,6 +23,15 @@ ITEM_PERIOD = re.compile(
 AWARD_WORD = re.compile(r"铜奖|银奖|金奖|一等奖|二等奖|三等奖|奖学金|ACM")
 STRONG_MARKERS = ("优秀", "铜奖", "银奖", "金奖", "一等奖", "二等奖", "三等奖", "奖学金")
 NEGATIVE_PHRASES = ("已下线", "未正式推广", "未推广", "其他组员", "试运行结束后", "没有上线", "未上线", "而停止")
+NEGATIVE_CLAUSE = re.compile(
+    r"未正式推广|尚未推广|没有正式推广|没正式推广|未推广|"
+    r"已下线|未上线|没有上线|并未上线|"
+    r"试运行结束后|而停止|后停止|已停止|"
+    r"其他组员|其他成员|由他人|"
+    r"未获奖|没有获奖|只进初赛"
+)
+FAMILIAR_CLAIM = re.compile(r"(熟悉|精通|掌握|熟练使用|熟练)([^，。；;\n]{2,40})")
+FAMILIAR_FILLER = {"基础", "常用", "相关", "以及", "能够", "可以", "一个", "我们", "进行", "使用", "开发", "编程", "方面", "能力"}
 PROJECT_HEADING = re.compile(r"项目[^\n：:]{0,8}[：:]\s*([^\n（(，,]{2,30})")
 FICTIONAL_ORG = re.compile(r"（虚构：([^）]{2,20})）")
 MONTH_VALUES = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
@@ -39,6 +48,180 @@ def header_contact(user_contact: str, source: str = "") -> str:
     """
     del source
     return user_contact or ""
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def clause_is_negative_copy(clause: str, source: str) -> bool:
+    """A negative or stop clause copied from the source, whatever the contact field says."""
+    if not clause or not NEGATIVE_CLAUSE.search(clause):
+        return False
+    piece, hay = _compact(clause), _compact(source)
+    if len(piece) >= 8 and any(piece[index:index + 8] in hay for index in range(len(piece) - 7)):
+        return True
+    return any(match.group(0) in (source or "") for match in NEGATIVE_CLAUSE.finditer(clause))
+
+
+def copied_negative_clauses(text: str, source: str) -> list[str]:
+    found = []
+    for sentence in re.split(r"[。；;\n]+", text or ""):
+        pieces = re.split(r"[，,]", sentence) if NEGATIVE_CLAUSE.search(sentence or "") else [sentence]
+        for piece in pieces:
+            piece = piece.strip()
+            if clause_is_negative_copy(piece, source) and piece not in found:
+                found.append(piece)
+    return found
+
+
+def _drop_negative_clauses(text: str, source: str) -> str:
+    if not text or not copied_negative_clauses(text, source):
+        return text
+    kept = []
+    for sentence in re.split(r"[。；;\n]+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if NEGATIVE_CLAUSE.search(sentence):
+            parts = [part.strip() for part in re.split(r"[，,]", sentence) if part.strip() and not clause_is_negative_copy(part, source)]
+            sentence = "，".join(parts)
+        if sentence:
+            kept.append(sentence)
+    return "。".join(kept) + ("。" if kept else "")
+
+
+def _mentions_tech(text: str, tech: str) -> bool:
+    return re.search(r"(?<![A-Za-z])" + re.escape(tech) + r"(?![A-Za-z])", text or "", re.IGNORECASE) is not None
+
+
+def weak_techs(source: str, jd: str) -> list[str]:
+    """Tools the source only touched lightly, and the JD does not ask for."""
+    found = []
+    for tech in TECHNOLOGIES:
+        if _mentions_tech(jd or "", tech):
+            continue
+        pattern = re.compile(
+            rf"(了解|接触|试用).{{0,16}}(?<![A-Za-z]){re.escape(tech)}(?![A-Za-z])|"
+            rf"(?<![A-Za-z]){re.escape(tech)}(?![A-Za-z]).{{0,24}}(了解|课程实验|官方镜像|跑过)",
+            re.IGNORECASE)
+        if pattern.search(source or ""):
+            found.append(tech)
+    return found
+
+
+def _without_weak_sentences(text: str, techs: list[str]) -> str:
+    """Drop a skills line that is only about a weakly evidenced tool, or just that sentence."""
+    sentences = [sentence.strip() for sentence in re.split(r"[。；;\n]+", text or "") if sentence.strip()]
+    if not sentences or not any(_mentions_tech(text, tech) for tech in techs):
+        return text
+    if all(any(_mentions_tech(sentence, tech) for tech in techs) for sentence in sentences):
+        return ""
+    kept = [sentence for sentence in sentences if not any(_mentions_tech(sentence, tech) for tech in techs)]
+    return "。".join(kept) + ("。" if kept else "")
+
+
+def _content_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z]{2,}", text or ""))
+
+
+def _marker_for(prompt: str) -> str:
+    text = re.sub(r"^待补充[:：]?", "", prompt.strip().strip("【】")).strip()
+    return f"【待补充：{text}】"
+
+
+def _best_item(sections: list[dict], prompt: str):
+    tokens = _content_tokens(prompt)
+    best, best_score, fallback, skill_fallback = None, 0, None, None
+    for section in sections:
+        for item in section.get("items") or []:
+            if section.get("kind") == "skills":
+                skill_fallback = item
+            else:
+                fallback = item
+            score = len(tokens & _content_tokens(f"{section.get('title', '')}\n{item.get('text', '')}"))
+            if score > best_score:
+                best, best_score = item, score
+    if best_score:
+        return best
+    if any(_mentions_tech(prompt, tech) for tech in TECHNOLOGIES):
+        return skill_fallback or fallback
+    return fallback or skill_fallback
+
+
+def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> None:
+    """Put skipped questions on an existing item. Never open an empty block for them."""
+    for prompt in prompts:
+        marker = _marker_for(prompt)
+        core = prompt.strip().strip("？?。 ")
+        if any(marker in (item.get("text") or "") or (core and core in (item.get("text") or ""))
+               for section in sections for item in section.get("items") or []):
+            continue
+        target = _best_item(sections, prompt)
+        if not target:
+            continue
+        text = (target.get("text") or "").rstrip()
+        if text and text[-1] not in "。；":
+            text += "。"
+        target["text"] = text + marker
+        target["highlights"] = [phrase for phrase in target.get("highlights") or [] if phrase and phrase in target["text"]]
+
+
+def _skipped_followups(job: dict) -> list[str]:
+    if not job.get("answered") or job.get("answer_context"):
+        return []
+    plan = job.get("plan") or {}
+    prompts = [question.get("text", "").strip() for question in plan.get("questions") or [] if isinstance(question, dict) and question.get("text")]
+    prompts.extend(gap.strip() for gap in plan.get("gaps") or [] if isinstance(gap, str) and gap.strip())
+    return prompts
+
+
+def polish_draft(payload: dict, job: dict) -> dict:
+    """Drop copied negative clauses and weak skill lines, then mark skipped gaps.
+
+    Contact and school fields are intentionally unused: the same source produces
+    the same body whether or not the user filled them in.
+    """
+    source = (job.get("input") or {}).get("source_text") or ""
+    jd = (job.get("input") or {}).get("jd") or ""
+    weak = weak_techs(source, jd)
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        summary["text"] = _drop_negative_clauses(summary.get("text") or "", source).strip()
+        summary["highlights"] = [phrase for phrase in summary.get("highlights") or [] if phrase and phrase in summary["text"]]
+        if not summary["text"]:
+            payload["summary"] = None
+    kept = []
+    for section in payload.get("sections") or []:
+        items = []
+        skill_block = section.get("kind") == "skills" or "技能" in (section.get("title") or "")
+        for item in section.get("items") or []:
+            text = _drop_negative_clauses(item.get("text") or "", source).strip()
+            if skill_block and weak:
+                text = _without_weak_sentences(text, weak).strip()
+            if not text:
+                continue
+            updated = dict(item)
+            updated["text"] = text
+            updated["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in text]
+            items.append(updated)
+        if not items:
+            continue
+        updated_section = dict(section)
+        updated_section["items"] = items
+        kept.append(updated_section)
+    _inject_gap_markers(kept, _skipped_followups(job))
+    payload["sections"] = kept
+    return payload
+
+
+def ungrounded_familiarity(claim: str, source: str) -> str:
+    """Familiarity claims whose object is absent from the cited source."""
+    missing = []
+    for match in FAMILIAR_CLAIM.finditer(claim or ""):
+        tokens = [token for token in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z+#.]{2,}", match.group(2)) if token not in FAMILIAR_FILLER]
+        missing.extend(token for token in tokens if token.lower() not in (source or "").lower() and token not in missing)
+    return "、".join(missing[:4])
 
 
 def draft_text(draft) -> str:
@@ -153,6 +336,12 @@ def blocking_gates(job: dict, draft) -> list[Issue]:
         if stated and "【待确认" not in draft_text(draft):
             issues.append(_issue("document", "blocking", "fact_card_conflict",
                                   "实习或任职时长在材料和补充回答里不一致。不要自行选定一个月或两个月，请在该条写上【待确认：…】。"))
+    if job.get("mode", "generate") == "generate":
+        copied = copied_negative_clauses(seen, source)
+        if copied:
+            shown = "；".join(copied[:2])[:80]
+            issues.append(_issue("document", "blocking", "conflict",
+                                  f"负面或结束状态被照搬进正文：「{shown}」。删掉这一句，不要改成更强的状态。"))
     for section in draft.sections:
         if not section.start_date or not section.end_date or section.end_date == "至今":
             continue

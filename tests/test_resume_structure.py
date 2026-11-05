@@ -24,11 +24,12 @@ def test_structured_content_renders_fixed_education_dates_and_safe_highlights():
     content = ResumeContent.model_validate(structured())
     html = render_html(content)
     assert "教育经历" in html and "虚构学院" in html
-    assert "2025-02" in html and "2025-06" in html
+    assert "2025.02" in html and "2025.06" in html
+    assert "2025-02" not in html
     assert "<strong>查询接口</strong>" in html
     doc = Document(BytesIO(render_docx(content, False, False)))
     text = "\n".join(p.text for p in doc.paragraphs)
-    assert "虚构学院" in text and "2024-09" in text and "2025-06" in text
+    assert "虚构学院" in text and "2024.09" in text and "2025.06" in text
     assert any(r.bold and r.text == "查询接口" for p in doc.paragraphs for r in p.runs)
     assert any("虚构学院" in text for text in expected_texts(content))
 

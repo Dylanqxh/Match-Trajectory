@@ -5,6 +5,9 @@ import { QualityReport } from "./QualityReport";
 
 const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达", supervise: "安排本轮修正重点" };
 const states: Record<string, string> = { queued: "等待执行", running: "正在处理", waiting_input: "补充一点信息", ready: "候选已保存", failed: "本次处理未完成", interrupted: "任务已中断", cancelled: "已取消" };
+function resumeDate(value?: string) {
+  return (value || "").replace(/((?:19|20|21)\d{2})-(0[1-9]|1[0-2])/g, "$1.$2");
+}
 
 export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinished }: {
   jobId: string; onClose: () => void; onAdopt: (row: Resume) => void; beforeAdopt: () => boolean;
@@ -59,9 +62,9 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
           <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，直接生成</button></div></div>}
       {job.draft && <div className="candidate-content">
         <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "事实审阅通过；写作质量见单独报告，仍需核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
-        {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[row.start_date, row.end_date].filter(Boolean).join(" — ")}</p>)}
-        {job.draft.summary && <p>{job.draft.summary.text}</p>}
-        {job.draft.sections.map(section => <section key={section.id}><h3>{section.title}</h3><p className="fine">{[section.organization, section.role, [section.start_date, section.end_date].filter(Boolean).join(" — ")].filter(Boolean).join(" · ")}</p><ul>{section.items.map(item => <li key={item.id}><ResumeText text={item.text} highlights={item.highlights}/></li>)}</ul></section>)}
+        {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[resumeDate(row.start_date), resumeDate(row.end_date)].filter(Boolean).join(" — ")}</p>)}
+        {job.draft.summary && <p>{resumeDate(job.draft.summary.text)}</p>}
+        {job.draft.sections.map(section => <section key={section.id}><h3>{section.title}</h3><p className="fine">{[section.organization, section.role, [resumeDate(section.start_date), resumeDate(section.end_date)].filter(Boolean).join(" — ")].filter(Boolean).join(" · ")}</p><ul>{section.items.map(item => <li key={item.id}><ResumeText text={resumeDate(item.text)} highlights={(item.highlights || []).map(resumeDate)}/></li>)}</ul></section>)}
       </div>}
       {job.draft && <QualityReport report={job.review?.quality} sections={job.draft.sections} education={job.draft.education}/>}
       {job.skill?.role === "general" && <p className="notice">当前使用通用岗位规则，此方向尚未专项验证。</p>}

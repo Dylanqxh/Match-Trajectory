@@ -229,6 +229,95 @@ def test_personal_summary_block_is_sent_back_before_writing_review(tmp_path):
     assert any(issue["code"] == "structure" for issue in model.calls[2][1]["issues_to_fix"])
 
 
+def _sample_copy():
+    from app.generation_models import Draft
+
+    return Draft.model_validate({"sections": [
+        {"id": "skills", "title": "专业技能", "kind": "skills", "items": [
+            {"id": "sk-java", "text": "Java：课程与项目中使用约两年。", "fact_ids": ["e1"]},
+            {"id": "sk-docker", "text": "Docker：了解，只在课程实验里跑过官方镜像。", "fact_ids": ["e1"]},
+        ]},
+        {"id": "seat", "title": "图书馆座位预约", "kind": "project", "items": [
+            {"id": "seat-run", "text": "社团组织 2 周试运行，覆盖图书馆一层自习区。试运行结束后因学校统一系统上线而停止，未正式推广。", "fact_ids": ["e1"]},
+            {"id": "seat-others", "text": "前端与支付模拟由其他组员完成。", "fact_ids": ["e1"]},
+        ]},
+        {"id": "honor", "title": "校园与荣誉", "kind": "campus", "items": [
+            {"id": "bronze", "text": "省赛铜奖。", "fact_ids": ["e1"]},
+        ]},
+    ]})
+
+
+@pytest.mark.parametrize(("contact", "school"), [
+    ("", ""),
+    ("campus-be-001@example.invalid", "江城大学"),
+])
+def test_sample1_strips_negatives_marks_skipped_gaps_and_drops_docker_either_way(contact, school):
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+    from app.resume_layout import education_text, period_text
+    from app.skill import build_evidence
+
+    education = [{"id": "edu1", "school": school, "degree": "本科", "major": "软件工程", "start_date": "2023-09", "end_date": "2027-06"}] if school else []
+    evidence = [item.model_dump() for item in build_evidence(SAMPLE1)]
+    for row in education:
+        from app.models import Education
+        profile = Education.model_validate(row)
+        text = " ".join(filter(None, (education_text(profile), period_text(profile))))
+        evidence.extend(item.model_dump() for item in build_evidence(text, prefix=f"profile-{row['id']}-"))
+    job = {"answered": True, "answer_context": [], "evidence": evidence,
+           "plan": {"questions": [{"id": "q1", "text": "试运行期间大约多少人使用？"},
+                                  {"id": "q2", "text": "省赛铜奖是个人赛还是团队赛？"}], "gaps": ["Redis 是否只了解基础用法"]},
+           "input": {"source_text": SAMPLE1, "jd": JD, "contact": contact, "education": education, "career_stage": "entry"}}
+    polished = prepare_draft(job, _sample_copy())
+    body = "\n".join(item.text for section in polished.sections for item in section.items)
+    assert "未正式推广" not in body and "试运行结束后" not in body and "其他组员" not in body
+    assert "社团组织 2 周试运行，覆盖图书馆一层自习区" in body
+    assert "【待补充：试运行期间大约多少人使用？" in body
+    assert "【待补充：省赛铜奖是个人赛还是团队赛？" in body
+    assert "【待补充：Redis 是否只了解基础用法" in body
+    assert "Docker" not in body and "Java" in body
+    assert all(section.items for section in polished.sections)
+    assert not any(section.kind == "skills" and not section.items for section in polished.sections)
+    raw = Draft.model_validate(_sample_copy().model_dump())
+    from app.gates import blocking_gates
+    blocked = blocking_gates({"mode": "generate", "input": job["input"], "answer_context": []}, raw)
+    assert any(issue.severity == "blocking" and "未正式推广" in issue.message for issue in blocked)
+
+
+def test_ungrounded_skill_claim_is_blocked_with_or_without_contact():
+    from app.gates import blocking_gates
+    from app.generation_models import Draft
+    from app.skill import build_evidence, validate_draft
+
+    claim = "熟悉面向对象基础与集合等常用类库。"
+    evidence = build_evidence(SAMPLE1)
+    for contact in ("", "campus-be-001@example.invalid"):
+        issues = validate_draft(make_draft(claim), evidence)
+        assert any(issue.severity == "blocking" and issue.code == "unsupported" and "面向对象" in issue.message for issue in issues)
+        draft = Draft.model_validate({"sections": [{"id": "skills", "title": "专业技能", "kind": "skills", "items": [
+            {"id": "i", "text": claim, "fact_ids": ["e1"]}]}]})
+        same = blocking_gates(_job(SAMPLE1, contact=contact), draft)
+        assert all("面向对象" not in issue.message or issue.severity == "blocking" for issue in same)
+        assert contact in ("", "campus-be-001@example.invalid")
+
+
+def test_resume_dates_render_with_dots():
+    from io import BytesIO
+
+    from docx import Document
+
+    from app.models import Education, ResumeContent
+    from app.rendering import render_docx, render_html
+
+    content = ResumeContent(name="测", contact="a@example.com", target_role="后端",
+                            education=[Education(id="edu1", school="江城示例理工大学", degree="本科", major="软件工程", start_date="2023-09", end_date="2027-06")],
+                            sections=[])
+    html = render_html(content)
+    doc = "\n".join(paragraph.text for paragraph in Document(BytesIO(render_docx(content, False, False))).paragraphs)
+    assert "2023.09" in html and "2027.06" in html and "2023-09" not in html
+    assert "2023.09" in doc and "2023-09" not in doc
+
+
 def test_skipped_followup_still_demands_a_full_draft_without_an_empty_block(tmp_path):
     from test_workflow import request, setup
 

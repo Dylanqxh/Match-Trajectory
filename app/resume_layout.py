@@ -22,8 +22,28 @@ _AWARD = re.compile(r"优秀|铜奖|银奖|金奖|一等奖|二等奖|三等奖|
 _NUMERIC = re.compile(r"\d+(?:[.,]\d+)?")
 
 
+def _field(row, name):
+    return row.get(name) if isinstance(row, dict) else getattr(row, name, "")
+
+
+def display_date(value: str) -> str:
+    """Stored dates stay YYYY-MM. Resumes show YYYY.MM."""
+    if not value or value == "至今":
+        return value or ""
+    return re.sub(r"^((?:19|20|21)\d{2})-(0[1-9]|1[0-2])$", r"\1.\2", value)
+
+
+def display_text(text: str) -> str:
+    return re.sub(r"(?<!\d)((?:19|20|21)\d{2})-(0[1-9]|1[0-2])(?!\d)", r"\1.\2", text or "")
+
+
 def period_text(row):
-    return " — ".join(filter(None, (row.start_date, row.end_date)))
+    """Canonical stored period, used when the date itself is evidence."""
+    return " — ".join(filter(None, (_field(row, "start_date"), _field(row, "end_date"))))
+
+
+def display_period(row):
+    return " — ".join(filter(None, (display_date(_field(row, "start_date")), display_date(_field(row, "end_date")))))
 
 
 def education_text(row):

@@ -120,7 +120,7 @@ class ReviewDraft(Draft):
 class Issue(StrictModel):
     item_id: str = Field(default="document", max_length=80)
     severity: Literal["blocking", "warning"]
-    code: Literal["reference", "unsupported", "attribution", "conflict", "quality", "fit"]
+    code: Literal["reference", "unsupported", "attribution", "conflict", "quality", "fit", "structure", "fact_card_conflict"]
     message: str = Field(min_length=1, max_length=500)
     suggestion: str = Field(default="", max_length=500)
     repair_action: Literal["revise", "need_input"] | None = None

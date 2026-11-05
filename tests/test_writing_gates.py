@@ -1,0 +1,244 @@
+"""Program gates for the five-block resume checklist."""
+import asyncio
+from pathlib import Path
+
+import pytest
+from test_skill import make_draft
+
+FIXTURES = Path(__file__).parent / "fixtures"
+SAMPLE1 = (FIXTURES / "sample1_source.txt").read_text(encoding="utf-8")
+SAMPLE3 = (FIXTURES / "sample3_source.txt").read_text(encoding="utf-8")
+JD = "熟练使用 MySQL 与 SQL。有计算机竞赛获奖者优先。"
+
+
+def _job(source, *, contact="", education=None, answers="", mode="generate", career_stage="unspecified"):
+    return {"mode": mode, "input": {"source_text": source, "contact": contact, "education": education or [],
+                                     "career_stage": career_stage, "jd": JD},
+            "answer_context": [{"question": "实习多久？", "answer": answers}] if answers else []}
+
+
+def test_five_block_labels_hide_empty_blocks_and_fold_acm_into_honors():
+    from io import BytesIO
+
+    from docx import Document
+
+    from app.models import Item, ResumeContent, Section
+    from app.rendering import render_docx, render_html
+
+    content = ResumeContent(name="虚构·宋知远", contact="campus-be-001@example.invalid", target_role="后端研发工程师",
+                            sections=[
+                                Section(id="acm", title="校 ACM 集训队", kind="other", items=[Item(id="a", text="省赛铜奖")]),
+                                Section(id="book", title="校园二手书", kind="project", items=[Item(id="b", text="完成订单接口")]),
+                                Section(id="empty-work", title="实习", kind="work", items=[]),
+                                Section(id="legacy", title="旧简历", kind="other", items=[Item(id="c", text="保留原文")]),
+                            ])
+    html = render_html(content)
+    assert "<h2>校园与荣誉</h2>" in html
+    assert "<h2>校 ACM 集训队</h2>" not in html
+    assert "<h2>项目</h2>" in html
+    assert "<h2>工作 / 实习经历</h2>" not in html
+    assert "旧简历" in html
+    doc = "\n".join(p.text for p in Document(BytesIO(render_docx(content, False, False))).paragraphs)
+    assert "校园与荣誉" in doc and "工作 / 实习经历" not in doc and "保留原文" in doc
+
+
+def test_stronger_project_outranks_a_later_weaker_one_and_dates_stay_put():
+    from app.models import Item, Section
+    from app.resume_layout import arrange_draft_sections, arrange_sections
+
+    rows = [Section(id="seat", title="图书馆座位预约", kind="project", start_date="2025-10", end_date="2026-01",
+                    items=[Item(id="s", text="用 Spring 定时任务做了 2 周试运行。")]),
+            Section(id="book", title="校园二手书", kind="project", start_date="2025-03", end_date="2025-06",
+                    items=[Item(id="b", text="用 MySQL 做行锁校验，获评优秀，12 条单元测试。")])]
+    assert [row.id for row in arrange_sections(rows, JD)] == ["book", "seat"]
+    arranged = arrange_draft_sections([
+        {"id": "acm", "title": "校 ACM 集训队", "kind": "other", "items": [{"text": "铜奖"}]},
+        {"id": "book", "title": "校园二手书", "kind": "project", "end_date": "2025-06", "items": [{"text": "获评优秀"}]},
+    ], JD)
+    assert arranged[0]["kind"] == "project" and arranged[1]["kind"] == "campus"
+    assert arranged[0]["end_date"] == "2025-06"
+
+
+def test_status_upgrade_and_tech_expansion_stay_blocking_while_omission_is_allowed():
+    from app.skill import build_evidence, validate_draft
+
+    trial = build_evidence("社团组织 2 周试运行，覆盖一层自习区，未正式推广。")
+    assert any(issue.code == "conflict" and issue.severity == "blocking"
+               for issue in validate_draft(make_draft("上线座位预约系统，服务全校学生。"), trial))
+    assert not validate_draft(make_draft("社团组织 2 周试运行，覆盖一层自习区。"), trial)
+    spring = build_evidence("用 Spring 定时任务释放座位。")
+    assert any("Spring Boot" in issue.message for issue in validate_draft(make_draft("用 Spring Boot 实现定时任务。"), spring))
+    both = build_evidence("订单接口使用 Spring Boot，座位任务使用 Spring 定时任务。")
+    assert not any("Spring Boot" in issue.message for issue in validate_draft(make_draft("订单接口使用 Spring Boot。"), both))
+    scope = build_evidence("座位项目使用 Spring 定时任务。")
+    assert any(issue.code == "unsupported" for issue in validate_draft(make_draft("Spring 用于两个项目。"), scope))
+    docker = build_evidence("了解 Docker，只在课程实验里跑过官方镜像。")
+    assert any(issue.code == "attribution" and issue.severity == "blocking"
+               for issue in validate_draft(make_draft("熟悉 Docker。"), docker))
+    java = build_evidence("熟悉 Java，完成查询接口。")
+    assert not any(issue.code == "attribution" for issue in validate_draft(make_draft("熟悉 Java，完成查询接口。"), java))
+
+
+def test_sample1_keeps_strong_results_drops_negative_lines_and_orders_projects():
+    from app.gates import gate_warnings
+    from app.generation_models import Draft
+
+    thin = Draft.model_validate({"sections": [
+        {"id": "seat", "title": "图书馆座位预约", "kind": "project", "end_date": "2026-01", "items": [
+            {"id": "s1", "text": "试运行结束后因学校统一系统上线而停止，未正式推广。课程结束后已下线。", "fact_ids": ["e1"]}]},
+        {"id": "book", "title": "校园二手书", "kind": "project", "end_date": "2025-06", "items": [
+            {"id": "b1", "text": "前端与支付模拟由其他组员完成。", "fact_ids": ["e1"]}]},
+    ]})
+    warnings = gate_warnings(_job(SAMPLE1), thin)
+    messages = " ".join(issue.message for issue in warnings)
+    assert "优秀" in messages and "铜奖" in messages
+    assert any("省略" in issue.message for issue in warnings)
+    assert all(issue.severity == "warning" for issue in warnings)
+    kept = Draft.model_validate({"sections": [
+        {"id": "skills", "title": "专业技能", "kind": "skills", "items": [
+            {"id": "sk", "text": "Java 与 MySQL：课程和订单项目中使用。Redis 基础用法。了解 Docker 的范围不写入正文。", "fact_ids": ["e1"]}]},
+        {"id": "book", "title": "校园二手书交易平台", "kind": "project", "start_date": "2025-03", "end_date": "2025-06", "items": [
+            {"id": "b1", "text": "小组课程验收获评优秀，全班 9 组中 2 组。", "fact_ids": ["e1"]}]},
+        {"id": "seat", "title": "图书馆座位预约", "kind": "project", "start_date": "2025-10", "end_date": "2026-01", "items": [
+            {"id": "s1", "text": "社团组织 2 周试运行，覆盖图书馆一层自习区。", "fact_ids": ["e1"]}]},
+        {"id": "honor", "title": "校园与荣誉", "kind": "campus", "items": [
+            {"id": "h1", "text": "校 ACM 集训队队员，省赛铜奖。", "fact_ids": ["e1"]}]},
+    ]})
+    assert not any(issue.repair_action == "revise" for issue in gate_warnings(_job(SAMPLE1, career_stage="entry"), kept))
+
+
+def test_user_school_wins_with_one_warning_and_empty_contact_rejects_inventions():
+    from app.gates import blocking_gates, gate_warnings, header_contact
+    from app.generation_models import Draft
+
+    source = "就读江城示例理工大学。使用 Java 完成查询接口。"
+    draft = Draft.model_validate({"education": [{"id": "edu1", "school": "江城大学", "degree": "本科", "major": "软件工程", "fact_ids": ["e1"]}],
+                                  "sections": [{"id": "p", "title": "查询", "kind": "project", "items": [
+                                      {"id": "i", "text": "使用 Java 完成查询接口。", "fact_ids": ["e1"]}]}]})
+    user = _job(source, contact="18800001111", education=[{"school": "江城大学"}])
+    assert blocking_gates(user, draft) == []
+    warnings = gate_warnings(user, draft)
+    assert len(warnings) == 1 and warnings[0].severity == "warning" and warnings[0].repair_action is None
+    assert "江城大学" in warnings[0].message and "江城示例理工大学" in warnings[0].message
+
+    invented = Draft.model_validate({"sections": [{"id": "p", "title": "查询", "kind": "project", "items": [
+        {"id": "i", "text": "请联系 18878765786 或 fake@example.com。", "fact_ids": ["e1"]}]}]})
+    blocked = blocking_gates(_job("使用 Java 完成查询接口。", contact=""), invented)
+    assert any(issue.severity == "blocking" and "18878765786" in issue.message for issue in blocked)
+    quoted = Draft.model_validate({"sections": [{"id": "p", "title": "查询", "kind": "project", "items": [
+        {"id": "i", "text": "材料中的邮箱 campus-be-001@example.invalid 只是原文。", "fact_ids": ["e1"]}]}]})
+    source_with_mail = "使用 Java 完成查询接口。邮箱 campus-be-001@example.invalid。"
+    assert blocking_gates(_job(source_with_mail, contact=""), quoted) == []
+    assert header_contact("", source_with_mail) == ""
+    assert header_contact("18800001111", source_with_mail) == "18800001111"
+
+
+def test_shortened_school_is_blocked_only_when_the_user_did_not_submit_it():
+    from app.gates import blocking_gates
+    from app.generation_models import Draft
+
+    draft = Draft.model_validate({"education": [{"id": "edu1", "school": "江城大学", "degree": "本科", "major": "软件工程", "fact_ids": ["e1"]}],
+                                  "sections": [{"id": "p", "title": "查询", "kind": "project", "items": [
+                                      {"id": "i", "text": "使用 Java 完成查询接口。", "fact_ids": ["e1"]}]}]})
+    issues = blocking_gates(_job("就读江城示例理工大学。使用 Java 完成查询接口。"), draft)
+    assert any(issue.severity == "blocking" and "全称" in issue.message for issue in issues)
+
+
+def test_duration_conflict_must_stay_visible_and_unanswered_source_can_keep_its_only_figure():
+    from app.gates import blocking_gates, durations_conflict
+    from app.generation_models import Draft
+
+    picked = Draft.model_validate({"sections": [{"id": "job", "title": "知南教育", "kind": "work", "items": [
+        {"id": "i", "text": "在知南教育实习一个月。", "fact_ids": ["e1"]}]}]})
+    conflicted = _job(SAMPLE3, answers="实际是 2025.07–2025.08，两个月。")
+    assert durations_conflict(SAMPLE3, "实际是 2025.07–2025.08，两个月。")
+    assert any(issue.code == "fact_card_conflict" and issue.severity == "blocking" for issue in blocking_gates(conflicted, picked))
+    marked = Draft.model_validate({"sections": [{"id": "job", "title": "知南教育", "kind": "work", "items": [
+        {"id": "i", "text": "知南教育实习【待确认：原材料写一个月，补充回答写 2025.07–2025.08 两个月】。", "fact_ids": ["e1"]}]}]})
+    assert not any(issue.code == "fact_card_conflict" for issue in blocking_gates(conflicted, marked))
+    single = Draft.model_validate({"sections": [
+        {"id": "club", "title": "学生会", "kind": "campus", "items": [{"id": "c", "text": "校学生会新媒体部干事，负责公众号排版。", "fact_ids": ["e1"]}]},
+        {"id": "job", "title": "知南教育", "kind": "work", "items": [{"id": "i", "text": "暑假在知南教育实习一个月。", "fact_ids": ["e1"]}]},
+    ]})
+    assert not any(issue.code == "fact_card_conflict" for issue in blocking_gates(_job(SAMPLE3), single))
+
+
+def test_project_item_cannot_use_another_periods_dates():
+    from app.gates import blocking_gates
+    from app.generation_models import Draft
+
+    draft = Draft.model_validate({"sections": [{"id": "book", "title": "校园二手书", "kind": "project",
+                                               "start_date": "2025-03", "end_date": "2025-06", "items": [
+                                                   {"id": "i", "text": "项目时间为 2025.10—2026.01。", "fact_ids": ["e1"]}]}]})
+    issues = blocking_gates(_job("校园二手书 2025.03—2025.06。座位项目 2025.10—2026.01。"), draft)
+    assert any(issue.code == "conflict" and "时间不一致" in issue.message for issue in issues)
+
+
+def test_ad_hoc_section_is_blocking_and_gap_markers_hold_formal_export(tmp_path):
+    from app.exports import check_export
+    from app.gates import blocking_gates
+    from app.generation_models import Draft
+    from app.models import ExportRequest, Item, ResumeContent, Section
+    from app.store import Conflict, ResumeStore
+
+    summary = Draft.model_validate({"sections": [{"id": "s", "title": "个人总结", "kind": "other", "items": [
+        {"id": "i", "text": "热爱技术。", "fact_ids": ["e1"]}]}]})
+    assert any(issue.code == "structure" and issue.severity == "blocking" for issue in blocking_gates(_job("热爱技术。"), summary))
+    assert blocking_gates(_job("热爱技术。", mode="recheck"), summary) == []
+    store = ResumeStore(tmp_path / "resumes.sqlite3")
+    content = ResumeContent(name="测", contact="a@example.com", target_role="后端", sections=[
+        Section(id="p", title="知南教育", kind="work", items=[Item(id="i", text="实习【待确认：一个月还是两个月】")])])
+    record = store.create(content, "manual", "实习过一个月")
+    store.confirm(record.id, 1)
+    with pytest.raises(Conflict, match="待确认"):
+        check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
+    check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1, draft=True))
+
+
+def test_missing_strong_result_asks_for_revision_and_user_school_does_not(tmp_path):
+    from test_workflow import PASS, PLAN, request, setup
+
+    source = "就读江城示例理工大学。项目获评优秀。使用 Java 完成课程预约查询接口，编写测试记录。"
+    missing = {"sections": [{"id": "projects", "title": "项目经历", "items": [
+        {"id": "item1", "text": "使用 Java 完成课程预约查询接口，并编写测试记录。", "fact_ids": ["e1"]}]}]}
+    restored = {"sections": [{"id": "projects", "title": "项目经历", "items": [
+        {"id": "item1", "text": "使用 Java 完成课程预约查询接口，并编写测试记录。课程获评优秀。", "fact_ids": ["e1"]}]}]}
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, missing, PASS, restored, PASS])
+    job = runner.submit(request(source_text=source, education=[{"id": "edu1", "school": "江城大学", "degree": "本科", "major": "软件工程"}]))
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready"
+    assert [call[0] for call in model.calls] == ["plan", "draft", "review", "revise", "review"]
+    assert any("优秀" in issue["message"] for issue in model.calls[3][1]["issues_to_fix"])
+    assert result["draft"]["education"][0]["school"] == "江城大学"
+    assert result["draft"]["sections"][0]["kind"] == "project"
+    school_notes = [issue for issue in result["issues"] if "江城大学" in issue["message"]]
+    assert len(school_notes) == 1 and school_notes[0]["severity"] == "warning"
+
+
+def test_personal_summary_block_is_sent_back_before_writing_review(tmp_path):
+    from test_workflow import DRAFT, PASS, PLAN, request, setup
+
+    summary = {"sections": [{"id": "about", "title": "个人总结", "kind": "other", "items": [
+        {"id": "item1", "text": "使用 Java 完成课程预约查询接口，并编写测试记录。", "fact_ids": ["e1"]}]}]}
+    runner, jobs, _, _, model = setup(tmp_path, [PLAN, summary, DRAFT, PASS])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    assert [call[0] for call in model.calls] == ["plan", "draft", "revise", "review"]
+    assert jobs.get(job["id"])["state"] == "ready"
+    assert any(issue["code"] == "structure" for issue in model.calls[2][1]["issues_to_fix"])
+
+
+def test_skipped_followup_still_demands_a_full_draft_without_an_empty_block(tmp_path):
+    from test_workflow import request, setup
+
+    ask = {"decision": "ask", "selected_fact_ids": ["e1"], "questions": [{"id": "q1", "text": "试运行有多少人使用？"}]}
+    runner, jobs, _, _, _ = setup(tmp_path, [ask])
+    job = runner.submit(request())
+    asyncio.run(runner.run_one())
+    waiting = jobs.get(job["id"])
+    runner.answer(job["id"], {"question_group": waiting["question_group"], "skip": True, "answers": {}})
+    context = runner._context(jobs.get(job["id"]), "draft")
+    assert context["followup_skipped"] is True
+    assert "【待补充" in context["instructions"] and "空板块" in context["instructions"]
+    assert "me@example.com" not in context["instructions"]

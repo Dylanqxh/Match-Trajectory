@@ -154,7 +154,11 @@ class ModelClient:
                   + "\nformat_examples 只表示格式，不提供事实或审阅结论，不得复制占位符。"
                   + "\nsummary 要么为 null，要么是包含 id/text/fact_ids 的对象，id 必须为 __summary。"
                   + "\n所有正文条目 id 全局唯一；每个段落必须用真实 evidence.id 引用，不得逐板块重复 item1。"
-                  + "\n若有 validation_feedback，请只纠正格式和引用，仍须保留事实边界。\n"
+                  + "\n若有 validation_feedback，请只纠正格式和引用，仍须保留事实边界。"
+                  + "\nsections.kind 只能是 skills（专业技能）、project（项目）、work（工作 / 实习经历）、campus（校园与荣誉）。"
+                  + "教育放 education 字段，不要另开板块。没有材料的块不要输出，也不要为空块写缺口标记。"
+                  + "竞赛和奖项放 campus。负面或无关事实可以省略，不得改成更强的状态、范围或规模。"
+                  + "同一段经历内的日期必须一致。原文中的获奖、获评和数量结果必须写进正文。\n"
                   + json.dumps(schema.model_json_schema(), ensure_ascii=False))
         user = json.dumps(data, ensure_ascii=False)
         if len(user) + len(system) > policy.max_context_chars:

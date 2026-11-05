@@ -174,13 +174,30 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
             pattern = r"(?<![A-Za-z])" + re.escape(technology) + r"(?![A-Za-z])"
             if re.search(pattern, claim.text, re.IGNORECASE) and not re.search(pattern, source, re.IGNORECASE):
                 add("unsupported", f"{technology} 未在引用材料中出现，不能从岗位要求推断为个人技能。")
+        if re.search(r"(?<![A-Za-z])Spring Boot(?![A-Za-z])", claim.text, re.IGNORECASE) and not re.search(
+                r"(?<![A-Za-z])Spring Boot(?![A-Za-z])", source, re.IGNORECASE):
+            add("unsupported", "不能把 Spring 写成 Spring Boot。引用材料没有出现 Spring Boot。")
+        for phrase in ("两个项目", "全部项目", "所有项目"):
+            if phrase in claim.text and phrase not in source:
+                add("unsupported", f"「{phrase}」扩大了原文范围。材料没这样写，就不能把一项实践说成多项。")
+                break
         if any(word in claim.text and word not in source for word in ATTRIBUTION):
             add("attribution", "责任或熟练程度比引用材料更强，需要核对个人范围。")
+        for technology in TECHNOLOGIES:
+            familiar = re.compile(rf"(熟悉|精通).{{0,8}}{re.escape(technology)}|{re.escape(technology)}.{{0,8}}(熟悉|精通)", re.IGNORECASE)
+            aware = re.compile(rf"了解.{{0,12}}{re.escape(technology)}|{re.escape(technology)}.{{0,12}}了解", re.IGNORECASE)
+            if familiar.search(claim.text) and not familiar.search(source) and aware.search(source):
+                add("attribution", f"原文对 {technology} 是了解或试用，不能写成熟悉或精通。")
+                break
         if "数倍" in claim.text and "数倍" not in source and not re.search(r"\d+(?:\.\d+)?\s*倍", source):
             issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“数倍”这类定性夸大未在引用材料中出现，请改回原文口径。"))
         if "显著提升" in claim.text and "显著提升" not in source:
             issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“显著提升”未在引用材料中出现，请改回原文口径。"))
-        boundaries = [(r"未上线|没有上线|仅离线", r"已上线|上线运行|生产部署"),
+        boundaries = [(r"未上线|没有上线|仅离线|未部署", r"已上线|上线运行|生产部署|正式上线"),
+                      (r"试运行|未正式推广|未推广|试运行结束后", r"已上线|正式上线|正式推广|服务全校|全校学生|生产环境"),
+                      (r"已下线|课程结束后已下线", r"在线运行|持续服务|仍在运行"),
+                      (r"本机", r"线上性能|生产环境"),
+                      (r"未获奖|没有获奖|只进初赛", r"(?<!未)(?<!没有)获奖|一等奖|晋级决赛"),
                       (r"在投|未发表|尚未发表", r"已发表|正式发表")]
         if any(re.search(negative, source) and re.search(positive, claim.text) for negative, positive in boundaries):
             add("conflict", "表达与原文的上线或发表状态限制冲突。")
@@ -207,8 +224,9 @@ def validate_quality(draft: Draft) -> list[Issue]:
 
     if draft.summary and len(draft.summary.text) > 100:
         warn("__summary", "简介偏长，请压缩为1—2句，仅保留目标相关的背景与证据，删除求职意愿和自我评价。")
+    block_titles = {"项目", "项目经历", "专业技能", "技能", "技能与实践", "工作 / 实习经历", "工作／实习经历", "工作／实习", "实习", "校园与荣誉"}
     for section in draft.sections:
-        if section.kind in ("project", "work", "research"):
+        if section.kind in ("project", "work", "research") and section.title not in block_titles:
             if not section.start_date and not section.end_date:
                 warn(section.id, "这段经历缺少时间；请在编辑器补充已知日期，未知时留空，不得推测。", "need_input")
             if len(section.items) > 4:

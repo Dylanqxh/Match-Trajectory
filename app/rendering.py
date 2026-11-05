@@ -8,10 +8,9 @@ from pathlib import Path
 
 from app.models import ResumeContent
 from app.resume_layout import (
-    KIND_LABELS,
     date_key,
     education_text,
-    ordered_sections,
+    grouped_blocks,
     period_text,
     section_text,
     text_runs,
@@ -34,23 +33,40 @@ def marker(demo: bool, draft: bool) -> str:
     return " · ".join(value for value in ["草稿" if draft else "", "虚构演示，不可直接投递" if demo else ""] if value)
 
 
+def _section_body(section, esc, rich, show_title: bool) -> str:
+    metadata = ""
+    if show_title or section.organization or section.role or period_text(section):
+        metadata = (f'<div class="experience-heading"><strong>{esc(section_text(section))}</strong>'
+                    f'<span>{esc(period_text(section))}</span></div>')
+    return metadata + '<ul>' + ''.join(f'<li>{rich(item)}</li>' for item in section.items) + '</ul>'
+
+
 def render_html(content: ResumeContent, demo: bool = False, draft: bool = False, font_uri: str = "/api/font") -> str:
     esc = html.escape
     notice = marker(demo, draft)
     def rich(item):
         return "".join(f"<strong>{esc(text)}</strong>" if bold else esc(text) for text, bold in text_runs(item.text, item.highlights))
 
-    education = ('<section><h2>教育经历</h2>' + "".join(
+    education_rows = ''.join(
         f'<div class="experience-heading"><strong>{esc(education_text(row))}</strong><span>{esc(period_text(row))}</span></div>'
-        for row in sorted(content.education, key=date_key, reverse=True)) + '</section>') if content.education else ''
-    blocks, previous_kind = [], None
-    for section in ordered_sections(content.sections):
-        heading = f'<h2>{esc(KIND_LABELS.get(section.kind) or section.title)}</h2>' if section.kind == "other" or section.kind != previous_kind else ''
-        metadata = (f'<div class="experience-heading"><strong>{esc(section_text(section))}</strong><span>{esc(period_text(section))}</span></div>'
-                    if section.kind in ("project", "work", "research") or section.organization or section.role or period_text(section) else '')
-        blocks.append('<section>' + heading + metadata + '<ul>' + ''.join(f'<li>{rich(item)}</li>' for item in section.items) + '</ul></section>')
-        previous_kind = section.kind
-    sections = ''.join(blocks)
+        for row in sorted(content.education, key=date_key, reverse=True))
+    body_blocks = []
+    grouped = grouped_blocks(content.sections)
+    education_extra = next((rows for label, rows in grouped if label == "教育经历"), [])
+    if content.education or education_extra:
+        extra = ''.join(_section_body(section, esc, rich, show_title=section.title not in ("", "教育经历")) for section in education_extra)
+        education = f'<section><h2>教育经历</h2>{education_rows}{extra}</section>'
+    else:
+        education = ''
+    for label, rows in grouped:
+        if label == "教育经历":
+            continue
+        parts = [f'<h2>{esc(label)}</h2>']
+        for section in rows:
+            show_title = section.title not in ("", label)
+            parts.append(_section_body(section, esc, rich, show_title=show_title or section.organization or section.role or period_text(section)))
+        body_blocks.append('<section>' + ''.join(parts) + '</section>')
+    sections = ''.join(body_blocks)
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 @font-face{{font-family:ResumeCJK;src:url("{esc(font_uri, quote=True)}")}}*{{box-sizing:border-box}}
 @page{{size:A4;margin:16mm}}html,body{{margin:0;background:white;color:#17232d}}
@@ -111,23 +127,32 @@ def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
         if dates:
             paragraph.add_run("\t" + dates)
 
-    if content.education:
+    grouped = grouped_blocks(content.sections)
+    education_extra = next((rows for label, rows in grouped if label == "教育经历"), [])
+    if content.education or education_extra:
         heading("教育经历")
         for row in sorted(content.education, key=date_key, reverse=True):
             dated_heading(education_text(row), period_text(row))
+        for block in education_extra:
+            if block.title not in ("", "教育经历"):
+                dated_heading(section_text(block), period_text(block))
+            for item in block.items:
+                paragraph = doc.add_paragraph(style="List Bullet")
+                for text, bold in text_runs(item.text, item.highlights):
+                    paragraph.add_run(text).bold = bold
     if content.summary:
         doc.add_paragraph(content.summary)
-    previous_kind = None
-    for block in ordered_sections(content.sections):
-        if block.kind == "other" or block.kind != previous_kind:
-            heading(KIND_LABELS.get(block.kind) or block.title)
-        previous_kind = block.kind
-        if block.kind in ("project", "work", "research") or block.organization or block.role or period_text(block):
-            dated_heading(section_text(block), period_text(block))
-        for item in block.items:
-            paragraph = doc.add_paragraph(style="List Bullet")
-            for text, bold in text_runs(item.text, item.highlights):
-                paragraph.add_run(text).bold = bold
+    for label, rows in grouped:
+        if label == "教育经历":
+            continue
+        heading(label)
+        for block in rows:
+            if block.title not in ("", label) or block.organization or block.role or period_text(block):
+                dated_heading(section_text(block), period_text(block))
+            for item in block.items:
+                paragraph = doc.add_paragraph(style="List Bullet")
+                for text, bold in text_runs(item.text, item.highlights):
+                    paragraph.add_run(text).bold = bold
     doc.core_properties.comments = "手工核对版本，未经 AI 审阅。" + marker(demo, draft)
     result = BytesIO()
     doc.save(result)

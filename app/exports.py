@@ -33,6 +33,10 @@ def check_export(record: ResumeRecord, request: ExportRequest):
             raise Conflict("请先核对并确认当前版本")
         if not record.content.name or not record.content.contact or not any(s.items for s in record.content.sections):
             raise IncompleteResume("请补充姓名、联系方式和至少一段真实内容；当前可先导出草稿")
+        from app.gates import gaps_need_resolution
+
+        if gaps_need_resolution(record.content, bool(record.ai and record.ai.manual_takeover)):
+            raise Conflict("正文还有待补充或待确认标记。请补全或删掉后再正式导出；也可以先导出草稿，或在没有其他阻断时接管。")
 
 
 def export_resume(store: ResumeStore, data_dir: Path, resume_id: str, request: ExportRequest) -> Path:

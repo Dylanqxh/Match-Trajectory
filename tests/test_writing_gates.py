@@ -429,6 +429,30 @@ def test_resume_dates_render_with_dots():
     assert "2023.09" in doc and "2023-09" not in doc
 
 
+def test_usage_count_marker_stays_on_the_trial_sentence_and_spacing_is_tight():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [
+        {"id": "skills", "title": "专业技能", "kind": "skills", "items": [
+            {"id": "sk", "text": "Java：课程与项目中使用约两年， Spring Boot 后端接口开发。", "fact_ids": ["e1"]}]},
+        {"id": "seat", "title": "图书馆座位预约", "kind": "project", "items": [
+            {"id": "s1", "text": "使用 Spring 定时任务实现签到超时自动释放座位。社团组织 2 周试运行，覆盖图书馆一层自习区。", "fact_ids": ["e1"]}]},
+    ]})
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {"questions": [
+        {"id": "q1", "text": "试运行期间大约多少人使用？"},
+        {"id": "q2", "text": "座位预约大概有多少人使用过？"},
+    ], "gaps": []}, "input": {"source_text": SAMPLE1, "jd": JD, "contact": "", "education": [], "career_stage": "entry"}}
+    polished = prepare_draft(job, draft)
+    skills = next(section for section in polished.sections if section.kind == "skills").items[0].text
+    seat = next(section for section in polished.sections if section.id == "seat").items[0].text
+    body = "\n".join(item.text for section in polished.sections for item in section.items)
+    assert "【待补充" not in skills
+    assert "， Spring" not in skills and "，Spring Boot" in skills
+    assert body.count("【待补充：使用人数】") == 1
+    assert seat.index("定时任务") < seat.index("试运行") < seat.index("【待补充：使用人数】")
+
+
 def test_marker_is_dropped_when_responsibility_or_dates_are_already_present():
     from app.generation_models import Draft
     from app.phases import prepare_draft
@@ -502,8 +526,8 @@ def test_truncated_and_coverage_markers_leave_the_body():
     polished = prepare_draft(job, draft)
     body = "\n".join(item.text for section in polished.sections for item in section.items)
     assert "缺少线上" not in body and "交易平台里" not in body and "定时任务】" not in body
-    assert "【待补充：个人负责的模块】" in body
-    assert "…" not in body and body.count("【待补充") == 1
+    assert "【待补充" not in body
+    assert any("承担" in note or "交易平台里" in note for note in job["coverage_notes"])
     honor = next(section for section in polished.sections if section.kind == "campus")
     from app.resume_layout import section_text
     assert section_text(honor) == "校 ACM 集训队 · 队员"

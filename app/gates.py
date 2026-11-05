@@ -187,6 +187,28 @@ def _sentence_score(sentence: str, prompt: str) -> int:
     return sum(len(token) for token in overlap)
 
 
+TOPIC_KEYWORDS = {
+    "使用人数": ("试运行", "覆盖", "用户", "使用"),
+    "个人负责的模块": ("负责", "模块", "接口"),
+    "效果数据": ("结果", "响应", "压测"),
+    "单元测试覆盖范围": ("单元测试",),
+    "起止时间": ("起止", "期间"),
+    "个人赛还是团队赛": ("铜奖", "省赛", "集训", "比赛"),
+    "岗位名称": ("岗位", "角色"),
+    "大约多少篇": ("排版", "篇"),
+}
+MARKER_SCORE_FLOOR = 2
+
+
+def _topic_score(sentence: str, label: str) -> int:
+    return sum(len(word) for word in TOPIC_KEYWORDS.get(label, ()) if word in sentence)
+
+
+def _tighten_punctuation(text: str) -> str:
+    """Drop the stray space in '， Spring Boot'."""
+    return re.sub(r"([，。；：、！？])[ \t]+", r"\1", text or "")
+
+
 def _insert_marker_after(text: str, sentence: str, marker: str) -> str:
     if marker in text:
         return text
@@ -224,26 +246,6 @@ def _detail_already_present(section: dict, item: dict, label: str) -> bool:
     return False
 
 
-def _place_marker(section: dict, item: dict, prompt: str) -> str:
-    """One fill-in, on the sentence it asks about. 'present' means the detail is already written."""
-    label = marker_label(prompt)
-    if not label or "【待补充" in (item.get("text") or ""):
-        return "skip"
-    if _detail_already_present(section, item, label):
-        return "present"
-    marker = f"【待补充：{label}】"
-    best, score = "", 0
-    for sentence in _sentences(item.get("text") or ""):
-        current = _sentence_score(sentence, prompt)
-        if current > score:
-            best, score = sentence, current
-    if score <= 0 or not best:
-        return "skip"
-    item["text"] = _insert_marker_after(item.get("text") or "", best, marker)
-    item["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in item["text"]]
-    return "placed"
-
-
 def _strip_body_markers(text: str) -> tuple[str, list[str]]:
     removed = []
 
@@ -256,37 +258,49 @@ def _strip_body_markers(text: str) -> tuple[str, list[str]]:
     return cleaned, removed
 
 
+def _is_skills_block(section: dict) -> bool:
+    return section.get("kind") == "skills" or "技能" in (section.get("title") or "")
+
+
+def _marker_already_written(sections: list[dict], label: str) -> bool:
+    marker = f"【待补充：{label}】"
+    return any(marker in (item.get("text") or "") for section in sections for item in section.get("items") or [])
+
+
 def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
-    """Fill-in prompts only, one per item and at most four. JD gaps are notes, not body text."""
-    notes, placed, ranked = [], 0, []
+    """One marker per label, never in skills, only on a sentence that clears the topic threshold."""
+    notes, placed = [], 0
+    best_for_label: dict[str, tuple] = {}
     for prompt in prompts:
         if not prompt:
             continue
-        if is_coverage_gap(prompt) or not is_detail_prompt(prompt, sections):
+        label = marker_label(prompt)
+        if is_coverage_gap(prompt) or not label:
             if prompt not in notes:
                 notes.append(prompt)
             continue
-        best_item, best_section, best_score = None, None, 0
+        choice = best_for_label.get(label)
+        best_score, best_item, best_section, best_sentence = (choice[1:] if choice else (0, None, None, ""))
         for section in sections:
+            if _is_skills_block(section):
+                continue
             for item in section.get("items") or []:
                 for sentence in _sentences(item.get("text") or ""):
-                    score = _sentence_score(sentence, prompt)
-                    if section.get("kind") == "campus":
-                        score -= 1
+                    score = _topic_score(sentence, label)
                     if score > best_score:
-                        best_item, best_section, best_score = item, section, score
-        ranked.append((best_score, prompt, best_item, best_section))
-    ranked.sort(key=lambda row: (-row[0], row[1]))
-    for score, prompt, item, section in ranked:
-        if placed >= MAX_MARKERS or score <= 0 or item is None or "【待补充" in (item.get("text") or ""):
-            if prompt not in notes:
+                        best_score, best_item, best_section, best_sentence = score, item, section, sentence
+        best_for_label[label] = (prompt, best_score, best_item, best_section, best_sentence)
+    for label, (prompt, score, item, section, sentence) in best_for_label.items():
+        if (_marker_already_written(sections, label) or placed >= MAX_MARKERS or score < MARKER_SCORE_FLOOR
+                or item is None or "【待补充" in (item.get("text") or "")):
+            if prompt not in notes and not _marker_already_written(sections, label):
                 notes.append(prompt)
             continue
-        outcome = _place_marker(section, item, prompt)
-        if outcome == "placed":
-            placed += 1
-        elif outcome == "skip" and prompt not in notes:
-            notes.append(prompt)
+        if _detail_already_present(section, item, label):
+            continue
+        item["text"] = _insert_marker_after(item.get("text") or "", sentence, f"【待补充：{label}】")
+        item["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in item["text"]]
+        placed += 1
     return notes
 
 
@@ -448,7 +462,7 @@ def polish_draft(payload: dict, job: dict) -> dict:
         items = []
         skill_block = section.get("kind") == "skills" or "技能" in (section.get("title") or "")
         for item in section.get("items") or []:
-            text = soften_proficiency(_drop_negative_clauses(item.get("text") or "", source), source).strip()
+            text = _tighten_punctuation(soften_proficiency(_drop_negative_clauses(item.get("text") or "", source), source)).strip()
             if skill_block and weak:
                 text = _without_weak_sentences(text, weak).strip()
             text, removed = _strip_body_markers(text)

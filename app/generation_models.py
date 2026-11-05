@@ -83,11 +83,20 @@ class Draft(StrictModel):
         return ([self.summary] if self.summary else []) + [c for s in self.sections for c in s.items]
 
     def metadata_claims(self, refs) -> list[Claim]:
-        return [Claim(id=e.id, text=" ".join(filter(None, (education_text(e), period_text(e)))), fact_ids=e.fact_ids)
-                for e in self.education if education_text(e) or period_text(e)] + [
-            Claim(id=s.id, text=" ".join(filter(None, (section_text(s), period_text(s)))),
-                  fact_ids=s.fact_ids or list(dict.fromkeys(ref for i in s.items for ref in i.fact_ids)) or refs)
-            for s in self.sections]
+        claims = []
+        for row in self.education:
+            text = " ".join(filter(None, (education_text(row), period_text(row)))).strip()
+            if text:
+                claims.append(Claim(id=row.id, text=text, fact_ids=row.fact_ids))
+        for section in self.sections:
+            # A block label such as 专业技能 has no heading of its own. Skip it
+            # instead of building a claim with an empty body.
+            text = " ".join(filter(None, (section_text(section), period_text(section)))).strip()
+            if not text:
+                continue
+            fact_ids = section.fact_ids or list(dict.fromkeys(ref for item in section.items for ref in item.fact_ids)) or refs
+            claims.append(Claim(id=section.id, text=text, fact_ids=fact_ids))
+        return claims
 
     def to_content(self, name: str, contact: str, target_role: str, education=None) -> ResumeContent:
         return ResumeContent(name=name, contact=contact, target_role=target_role,

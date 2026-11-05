@@ -272,8 +272,8 @@ def test_sample1_strips_negatives_marks_skipped_gaps_and_drops_docker_either_way
     body = "\n".join(item.text for section in polished.sections for item in section.items)
     assert "未正式推广" not in body and "试运行结束后" not in body and "其他组员" not in body
     assert "社团组织 2 周试运行，覆盖图书馆一层自习区" in body
-    assert "【待补充：试运行期间大约多少人使用？" in body
-    assert "【待补充：省赛铜奖是个人赛还是团队赛？" in body
+    assert "【待补充：使用人数】" in body
+    assert "【待补充：个人赛还是团队赛】" in body
     assert "【待补充：Redis" not in body
     assert any("Redis" in note for note in job["coverage_notes"])
     assert "Docker" not in body and "Java" in body
@@ -327,7 +327,7 @@ def test_jd_gaps_stay_out_of_the_body_and_markers_sit_on_their_sentence():
     polished = prepare_draft(job, draft)
     book = next(section for section in polished.sections if section.id == "book").items[0].text
     honor = next(section for section in polished.sections if section.kind == "campus").items[0].text
-    assert book.index("单元测试") < book.index("【待补充：单元测试覆盖了哪些场景？】") < book.index("JMeter")
+    assert book.index("单元测试") < book.index("【待补充：单元测试覆盖范围】") < book.index("JMeter")
     assert "【待补充" not in honor
     assert all("JD" not in item.text for section in polished.sections for item in section.items)
     assert sum(item.text.count("【待补充") for section in polished.sections for item in section.items) <= 4
@@ -427,6 +427,88 @@ def test_resume_dates_render_with_dots():
     doc = "\n".join(paragraph.text for paragraph in Document(BytesIO(render_docx(content, False, False))).paragraphs)
     assert "2023.09" in html and "2027.06" in html and "2023-09" not in html
     assert "2023.09" in doc and "2023-09" not in doc
+
+
+def test_skills_heading_does_not_create_an_empty_claim():
+    from app.generation_models import Draft
+    from app.skill import build_evidence, validate_draft
+
+    draft = Draft.model_validate({"sections": [{"id": "skills", "title": "专业技能", "kind": "skills", "items": [
+        {"id": "sk", "text": "Java：课程与项目中使用约两年。", "fact_ids": ["e1"]}]}]})
+    assert draft.metadata_claims(["e1"]) == []
+    assert not any(issue.severity == "blocking" for issue in validate_draft(draft, build_evidence(SAMPLE1)))
+
+
+def test_truncated_and_coverage_markers_leave_the_body():
+    from app.gates import marker_label
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    assert marker_label("校园二手书交易平台里") is None
+    assert marker_label("图书馆座位预约的定时任务") is None
+    assert marker_label("ACM 省赛你个人在队内主要承担什么（如算法实现、调试、") == "个人负责的模块"
+    assert marker_label("缺少线上/生产环境经验") is None
+    draft = Draft.model_validate({"sections": [
+        {"id": "seat", "title": "图书馆座位预约小程序后端", "kind": "project", "items": [
+            {"id": "s1", "text": "社团组织 2 周试运行，覆盖图书馆一层自习区。【待补充：缺少线上/生产环境经验】【待补充：图书馆座位预约的定时任务】", "fact_ids": ["e1"]},
+        ]},
+        {"id": "honor", "title": "校园经历", "kind": "campus", "items": [
+            {"id": "h1", "text": "省赛铜奖。", "fact_ids": ["e1"]},
+        ]},
+    ]})
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {"questions": [
+        {"id": "q1", "text": "ACM 省赛你个人在队内主要承担什么（如算法实现、调试、"},
+        {"id": "q2", "text": "校园二手书交易平台里"},
+    ], "gaps": ["缺少线上/生产环境经验"]}, "input": {"source_text": SAMPLE1, "jd": JD, "contact": "", "education": [], "career_stage": "entry"}}
+    polished = prepare_draft(job, draft)
+    body = "\n".join(item.text for section in polished.sections for item in section.items)
+    assert "缺少线上" not in body and "交易平台里" not in body and "定时任务】" not in body
+    assert "【待补充：个人负责的模块】" in body
+    assert "…" not in body and body.count("【待补充") == 1
+    honor = next(section for section in polished.sections if section.kind == "campus")
+    from app.resume_layout import section_text
+    assert section_text(honor) == "校 ACM 集训队 · 队员"
+    assert "校园经历" not in (honor.title, honor.organization, honor.role)
+    assert any("生产环境" in note or "交易平台里" in note for note in job["coverage_notes"])
+
+
+@pytest.mark.parametrize(("contact", "school"), [("", ""), ("campus-be-001@example.invalid", "江城大学")])
+def test_sample1_recorded_draft_reaches_ready_for_both_headers(tmp_path, contact, school):
+    from test_workflow import PASS, request, setup
+    from test_writing_coach import quality
+
+    plan = {"decision": "draft", "selected_fact_ids": ["e1", "e2"], "focus": ["MySQL"], "questions": [], "gaps": ["缺少线上/生产环境经验"]}
+    recorded = {"sections": [
+        {"id": "skills", "title": "专业技能", "kind": "skills", "fact_ids": ["e1"], "items": [
+            {"id": "sk1", "text": "Java：课程与项目中使用约两年。Spring Boot、MySQL。Redis 基础用法。", "fact_ids": ["e1"]}]},
+        {"id": "book", "title": "校园二手书交易平台后端", "kind": "project", "role": "4 人小组", "start_date": "2025-03", "end_date": "2025-06", "fact_ids": ["e1"], "items": [
+            {"id": "b1", "text": "用 Spring Boot 与 MySQL 实现下单、取消、超时关单 3 个接口，并编写 12 条单元测试。", "fact_ids": ["e1"]},
+            {"id": "b2", "text": "小组课程验收获评优秀，全班 9 组中 2 组。使用 JMeter，50 个并发线程下平均响应约 180ms。", "fact_ids": ["e1"]}]},
+        {"id": "seat", "title": "图书馆座位预约小程序后端", "kind": "project", "role": "3 人小组", "start_date": "2025-10", "end_date": "2026-01", "fact_ids": ["e2"], "items": [
+            {"id": "s1", "text": "用 Spring 定时任务实现签到超时自动释放座位。社团组织 2 周试运行，覆盖图书馆一层自习区。", "fact_ids": ["e2"]}]},
+        {"id": "honor", "title": "校园经历", "kind": "campus", "fact_ids": ["e2"], "items": [
+            {"id": "h1", "text": "省赛铜奖。", "fact_ids": ["e2"]}]},
+    ]}
+    review = {**PASS, "quality": quality("revise")}
+    runner, jobs, _, _, model = setup(tmp_path, [plan, recorded, review, recorded, {**PASS, "quality": quality()}])
+    education = [{"id": "edu1", "school": school, "degree": "本科", "major": "软件工程", "start_date": "2023-09", "end_date": "2027-06"}]
+    submitted = request(source_text=SAMPLE1, jd=JD, education=education, career_stage="entry")
+    if contact:
+        submitted = submitted.model_copy(update={"contact": contact})
+    job = runner.submit(submitted)
+    if not contact:
+        jobs.mutate(job["id"], lambda current, _: current["input"].update(contact=""))
+    asyncio.run(runner.run_one())
+    result = jobs.get(job["id"])
+    assert result["state"] == "ready", result.get("error")
+    assert result["error"] == ""
+    assert [call[0] for call in model.calls] == ["plan", "draft", "review", "revise", "review"]
+    body = "\n".join(item["text"] for section in result["draft"]["sections"] for item in section["items"])
+    assert "专业技能" in [section["title"] for section in result["draft"]["sections"]]
+    assert "缺少线上" not in body
+    honor = next(section for section in result["draft"]["sections"] if section["kind"] == "campus")
+    from app.resume_layout import section_text
+    assert section_text(honor) == "校 ACM 集训队 · 队员"
 
 
 def test_skipped_followup_still_demands_a_full_draft_without_an_empty_block(tmp_path):

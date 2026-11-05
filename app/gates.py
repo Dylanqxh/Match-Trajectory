@@ -132,7 +132,10 @@ def _content_tokens(text: str) -> set[str]:
 
 
 DETAIL_PROMPT = re.compile(r"多少|几人|几名|几位|什么时候|哪年|哪一年|起止|日期|时间|年份|个人赛|团队赛|人数|时长|篇数|名次")
-COVERAGE_GAP = re.compile(r"没有.{0,24}(?:证据|经历|材料)|无.{0,16}(?:证据|经历)|缺材料|暂不写入|暂无可写|无可写|JD|优先项|不写入")
+COVERAGE_GAP = re.compile(
+    r"没有.{0,24}(?:证据|经历|材料)|无.{0,16}(?:证据|经历)|缺材料|暂不写入|暂无可写|无可写|JD|优先项|不写入|"
+    r"缺少.{0,20}(?:经验|经历)|缺乏.{0,12}(?:经验|经历)|生产环境|线上经验|线上/"
+)
 MARKER_TEXT = re.compile(r"【待补充：([^】]*)】")
 PROMPT_STOPWORDS = {"什么", "是否", "可以", "这个", "一个", "我们", "还有", "关于", "相关", "材料", "证据", "经历", "没有", "暂不"}
 MAX_MARKERS = 4
@@ -146,19 +149,33 @@ def is_coverage_gap(text: str) -> bool:
     return bool(COVERAGE_GAP.search(text or ""))
 
 
-def is_detail_prompt(text: str, sections: list[dict] | None = None) -> bool:
-    """A fill-in for an existing sentence, not a 'no evidence for this JD item' note."""
-    if not text or is_coverage_gap(text):
-        return False
-    if DETAIL_PROMPT.search(text):
-        return True
-    return any(_sentence_score(sentence, text) >= 2 for section in sections or [] for item in section.get("items") or []
-               for sentence in _sentences(item.get("text") or ""))
+_FILL_IN = (
+    (re.compile(r"多少人|几名|人数|多少名"), "使用人数"),
+    (re.compile(r"个人赛|团队赛|组队"), "个人赛还是团队赛"),
+    (re.compile(r"负责|承担"), "个人负责的模块"),
+    (re.compile(r"效果|结果数据|性能数据"), "效果数据"),
+    (re.compile(r"单元测试"), "单元测试覆盖范围"),
+    (re.compile(r"起止|哪年|哪一年|日期|年份"), "起止时间"),
+    (re.compile(r"岗位|角色"), "岗位名称"),
+    (re.compile(r"多少篇|篇数"), "大约多少篇"),
+)
 
 
-def _short_prompt(text: str) -> str:
+def marker_label(text: str) -> str | None:
+    """A complete short fill-in, or nothing. Never a truncated question."""
     cleaned = re.sub(r"^待补充[:：]?", "", (text or "").strip().strip("【】")).strip()
-    return re.split(r"[，,；;]", cleaned)[0].strip()[:28]
+    if not cleaned or is_coverage_gap(cleaned):
+        return None
+    for pattern, label in _FILL_IN:
+        if pattern.search(cleaned):
+            return label
+    return None
+
+
+def is_detail_prompt(text: str, sections: list[dict] | None = None) -> bool:
+    """A fill-in for an existing sentence, not a missing capability."""
+    del sections
+    return marker_label(text) is not None
 
 
 def _sentences(text: str) -> list[str]:
@@ -184,9 +201,10 @@ def _insert_marker_after(text: str, sentence: str, marker: str) -> str:
 
 def _place_marker(item: dict, prompt: str) -> bool:
     """One fill-in, on the sentence it asks about, never glued to a different sentence."""
-    if "【待补充" in (item.get("text") or ""):
+    label = marker_label(prompt)
+    if not label or "【待补充" in (item.get("text") or ""):
         return False
-    marker = f"【待补充：{_short_prompt(prompt)}】"
+    marker = f"【待补充：{label}】"
     best, score = "", 0
     for sentence in _sentences(item.get("text") or ""):
         current = _sentence_score(sentence, prompt)
@@ -325,17 +343,17 @@ def _restore_honor_heading(section: dict, source: str) -> None:
     match = re.search(r"(校\s*ACM\s*集训队)\s*(队员|队长)", source or "")
     blob = " ".join(filter(None, (section.get("title"), section.get("organization"), section.get("role"),
                                    " ".join(item.get("text") or "" for item in section.get("items") or []))))
-    if not match or ("集训队" in blob and match.group(2) in blob and "校园与荣誉" not in blob):
-        if not (section.get("title") or "").strip():
-            section["title"] = section.get("organization") or section.get("role") or "校园经历"
-            if section.get("organization") == section["title"]:
-                section["organization"] = ""
+    generic = (section.get("title") or "") in {"", "荣誉", "校园经历"}
+    about_team = any(token in blob for token in ("ACM", "集训", "铜奖", "省赛", "队员"))
+    if match and (generic or about_team or not (section.get("title") or section.get("role"))):
+        section["title"] = re.sub(r"\s+", " ", match.group(1)).strip()
+        section["role"] = match.group(2)
+        section["organization"] = ""
         return
-    section["title"] = re.sub(r"\s+", " ", match.group(1)).strip()
-    section["role"] = match.group(2)
-    section["organization"] = ""
-    if not section["title"]:
-        section["title"] = section["role"] or "校园经历"
+    if not (section.get("title") or "").strip():
+        section["title"] = section.get("organization") or section.get("role") or "荣誉"
+        if section.get("organization") == section["title"]:
+            section["organization"] = ""
 
 
 def _restore_team_sizes(sections: list[dict], source: str) -> None:

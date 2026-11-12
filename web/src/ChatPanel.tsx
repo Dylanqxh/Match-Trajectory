@@ -16,7 +16,7 @@ export function ChatPanel({ modelReady, onOpenSettings, onJob }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [drag, setDrag] = useState(false);
-  const [open, setOpen] = useState(() => localStorage.getItem("mt_assistant_open") !== "0");
+  const [open, setOpen] = useState(() => localStorage.getItem("mt_assistant_open") === "1");
   const log = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewBox = useRef<HTMLDivElement>(null);

@@ -8,6 +8,8 @@ import { ExperienceFields } from "./ExperienceFields";
 import { QualityReport } from "./QualityReport";
 import { ChatPanel } from "./ChatPanel";
 import { MaterialIntake } from "./MaterialIntake";
+import { RoleDirectionPicker } from "./RoleDirectionPicker";
+import { RoleDirection } from "./roleDirections";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -19,7 +21,7 @@ export default function App() {
   const [jd, setJd] = useState("");
   const [sendMaterials, setSendMaterials] = useState(false);
   const [allowQuestions, setAllowQuestions] = useState(true);
-  const [roleDirection, setRoleDirection] = useState<"product" | "backend" | "other">("other");
+  const [roleDirection, setRoleDirection] = useState<RoleDirection | "">("");
   const [careerStage, setCareerStage] = useState("unspecified");
   const [careerGap, setCareerGap] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -139,6 +141,7 @@ export default function App() {
   }
   async function generate() {
     await action(async () => {
+      if (!roleDirection) throw new Error("请先选择这份简历的求职方向");
       const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
       if (!covered) throw new Error("请先上传一份简历或 JD，或在下面粘贴经历");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
@@ -257,7 +260,7 @@ export default function App() {
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={interactionLocked} onClick={() => {
-        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
+        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
       <div className="nav-heading">我的简历 <span>{list.length}</span></div>
       <nav aria-label="我的简历">{list.map(row => <div className="record-nav-row" key={row.id}><button className={`resume-link ${record?.id === row.id ? "active" : ""}`} disabled={interactionLocked}
@@ -284,23 +287,28 @@ export default function App() {
       {!record ? <section className="start-layout">
         <div className="welcome"><span className="eyebrow">从已有材料开始</span><h2>先放入简历，<br/>缺的再补一句。</h2>
           <p>上传旧简历或 JD 就能生成。材料里已经有的姓名、联系方式、学校和经历不用重填；你手改过的以你填的为准。</p>
-          <div className="feature-line"><span>01 放入材料</span><span>02 生成与核对</span><span>03 局部修改</span></div>
+          <ol className="flow-steps"><li className={roleDirection ? "done" : "active"}><span>1</span>选方向</li><li className={roleDirection ? "active" : ""}><span>2</span>放材料</li><li><span>3</span>生成核对</li><li><span>4</span>编辑导出</li></ol>
           <button className="secondary" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => {
             adopt(await api<Resume>("/api/demo", {})); await refreshList();
           }); }}>先用虚构示例体验 →</button>
         </div>
         <form className="material-card" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
-          <h3>放入材料</h3>
-          <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
-          {recognized && <p className="notice">{recognized}</p>}
-          <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
-          <p className="fine">姓名和联系方式留在本机字段里；教育会作为事实回填。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
-          <button className="primary full" type="submit">用这些材料生成</button>
-          <details className="optional-fields"><summary>手改或补充某一项（选填，材料里有的可以留空）</summary>
+          <div className="material-card-head"><div><span className="eyebrow">新建简历</span><h3>确定方向，再放入材料</h3></div><span className="privacy-badge">仅在本机整理</span></div>
+          <section className="flow-section"><span className="step-label">步骤 1 · 求职方向</span>
+            <RoleDirectionPicker value={roleDirection} onChange={setRoleDirection}/>
+            <label className="target-role-field">目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如：推荐算法工程师（可稍后补）"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+          </section>
+          <section className="flow-section"><span className="step-label">步骤 2 · 真实材料</span>
+            <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
+            {recognized && <p className="notice material-recognized">{recognized}</p>}
+            {(source.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料"><span>{source.trim() ? `简历材料 ${source.trim().length.toLocaleString()} 字` : "尚未添加简历"}</span><span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span></div>}
+          </section>
+          <section className="flow-section consent-section"><span className="step-label">步骤 3 · 确认并生成</span>
+            <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
+            <button className="primary full generate-button" type="submit" disabled={!roleDirection}>{roleDirection ? "开始生成并核对事实" : "请先选择求职方向"}</button>
+          </section>
+          <details className="optional-fields"><summary>补充信息与高级选项</summary>
           <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="留空则使用材料中的姓名"/></label>
-          <label>简历方向<select aria-label="简历方向" value={roleDirection} onChange={e => setRoleDirection(e.target.value as "product" | "backend" | "other")}><option value="product">产品经理</option><option value="backend">后端</option><option value="other">其他（通用规则）</option></select></label>
-          <label>目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="留空则使用材料或 JD 中的岗位"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
-          <p className="fine">方向只按你在这里的选择加载，不会从岗位名称猜测。</p>
           <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="留空则使用材料中的手机或邮箱"/></label>
           <details><summary>求职背景（可选，用于调整写法）</summary>
             <label>求职阶段<select aria-label="求职阶段" value={careerStage} onChange={e => setCareerStage(e.target.value)}><option value="unspecified">不确定／通用</option><option value="entry">校招／初次求职</option><option value="experienced">社招／已有经验</option><option value="transition">转岗</option></select></label>

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "env:verify": "node tools/verify-node.mjs",
+    "test:web": "vitest run --pool=threads --maxWorkers=1",
     "build": "vite build --config web/vite.config.ts",
     "typecheck": "tsc --project web/tsconfig.json",
     "dev": "vite --config web/vite.config.ts"

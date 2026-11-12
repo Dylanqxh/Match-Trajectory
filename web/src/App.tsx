@@ -248,9 +248,11 @@ export default function App() {
         <span className="stage-chip">生成与交付 · M1.7</span></header>
       <div className="feedback" role="status">{interactionLocked ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
-      <div className="workbench">
-      <ChatPanel modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onJob={id => showJob(id)}/>
-      <div>
+      {!modelStatus.startsWith("已连接") && <div className="setup-banner">
+        <div><strong>先连接模型，再生成简历</strong><p>选择供应商，打开官方页面复制 Key，粘贴并测试。失败时会说明下一步，不会显示 Key。不配置也可以先看虚构示例。</p></div>
+        <button className="primary" type="button" onClick={() => setSettings(true)}>配置 Key</button>
+      </div>}
+      <div className="canvas">
       {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
         onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
       {!record ? <section className="start-layout">
@@ -323,8 +325,8 @@ export default function App() {
         </section></div>
       </>}
       </div>
-      </div>
     </main>
+    <ChatPanel modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onJob={id => showJob(id)}/>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
     {resolution && <ManualReview key={`${resolution.record.id}-${resolution.issueIndex}-${resolution.record.revision}`} record={resolution.record} issueIndex={resolution.issueIndex} onClose={() => setResolution(null)} onEdit={editIssue} onDraft={() => { setResolution(null); void download("docx", true); }} onSaved={row => {
       adopt(row);

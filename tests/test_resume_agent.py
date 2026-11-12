@@ -1,7 +1,10 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from app.generation_service import GenerationService
 from app.generation_models import Draft
@@ -142,3 +145,82 @@ def test_resume_agent_applies_a_generated_task_candidate_as_a_versioned_resume(t
     assert applied["resume"].revision == 2
     assert applied["session"]["target"]["type"] == "resume"
     assert applied["resume"].content.sections[0].items[0].text.endswith("300ms。")
+
+
+def api_transport(request):
+    payload = json.loads(request.content)
+    user = payload["messages"][-1]["content"]
+    if "Return only this JSON" in user:
+        content = {"ok": True}
+    else:
+        data = json.loads(user)
+        candidate = data["current_content"]
+        candidate["sections"][0]["items"][0]["text"] = "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。"
+        content = {"reply": "已生成一处修改提案。", "content": candidate,
+                   "reasons": [{"item_id": "query", "reason": "补充原文中的性能结果", "evidence_ids": ["e1"]}]}
+    return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(content, ensure_ascii=False)}}]})
+
+
+def open_agent_client(tmp_path, monkeypatch):
+    from app import providers
+    from app.main import create_app
+    from app.model_client import ModelClient
+
+    real_probe = providers.probe_provider
+
+    async def probe(config):
+        return await real_probe(config, transport=httpx.MockTransport(api_transport))
+
+    monkeypatch.setattr(providers, "probe_provider", probe)
+    app = create_app(tmp_path, model_client=ModelClient(transport=httpx.MockTransport(api_transport)))
+    client = TestClient(app, base_url="http://127.0.0.1")
+    client.__enter__()
+    client.get("/api/session")
+    settings = {"provider": "custom", "base_url": "https://model.example/v1", "model": "fixture", "api_key": "secret"}
+    assert client.post("/api/model-settings/test", json=settings).status_code == 200
+    return client, app
+
+
+def test_agent_api_reuses_a_target_session_and_keeps_legacy_chat_available(tmp_path, monkeypatch):
+    client, app = open_agent_client(tmp_path, monkeypatch)
+    try:
+        record = app.state.store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+        first = client.post("/api/agent/sessions", json={"target_type": "resume", "target_id": record.id})
+        second = client.post("/api/agent/sessions", json={"target_type": "resume", "target_id": record.id})
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()["id"] == second.json()["id"]
+        assert client.post("/api/chat/sessions").status_code == 201
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_agent_api_rejects_a_task_without_a_candidate(tmp_path, monkeypatch):
+    client, _ = open_agent_client(tmp_path, monkeypatch)
+    try:
+        job = client.post("/api/generation-jobs", json={"request_id": "empty-agent-task", "target_role": "后端研发"}).json()
+
+        response = client.post("/api/agent/sessions", json={"target_type": "job", "target_id": job["id"]})
+
+        assert response.status_code == 409
+        assert "候选" in response.text
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_agent_api_stale_apply_returns_conflict_without_overwriting_latest_resume(tmp_path, monkeypatch):
+    client, app = open_agent_client(tmp_path, monkeypatch)
+    try:
+        record = app.state.store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+        session = client.post("/api/agent/sessions", json={"target_type": "resume", "target_id": record.id}).json()
+        proposed = client.post(f"/api/agent/sessions/{session['id']}/messages", json={"text": "补上性能结果"}).json()
+        latest = base_content().model_copy(update={"summary": "用户刚刚保存的新内容"})
+        app.state.store.save(record.id, 1, latest)
+
+        response = client.post(f"/api/agent/sessions/{session['id']}/proposals/{proposed['proposal']['id']}/apply")
+
+        assert response.status_code == 409
+        assert app.state.store.get(record.id).content.summary == "用户刚刚保存的新内容"
+    finally:
+        client.__exit__(None, None, None)

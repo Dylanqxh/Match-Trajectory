@@ -32,6 +32,7 @@ from app.models import (
     SaveResume,
     Section,
 )
+from app.resume_agent import AgentMessageInput, AgentService, AgentTargetInput
 from app.store import Conflict, NotFound, ResumeStore
 from app.workflow import Workflow
 
@@ -69,7 +70,8 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     store = ResumeStore(data_dir / "resumes.sqlite3")
     jobs = JobStore(store)
     registry = ModelRegistry()
-    workflow = Workflow(store, jobs, registry, model_client or ModelClient())
+    client = model_client or ModelClient()
+    workflow = Workflow(store, jobs, registry, client)
     lifecycle = Lifecycle(store, jobs, data_dir)
 
     @asynccontextmanager
@@ -105,6 +107,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     app.state.key_storage = "memory"
     app.state.workflow = workflow
     chat = ChatService(store.engine, workflow)
+    agent = AgentService(workflow)
     session = secrets.token_urlsafe(32)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 
@@ -391,6 +394,26 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     async def upload_material(file: Annotated[UploadFile, File()]):
         data = await file.read()
         return chat.save_upload(upload_text.extract_upload(file.filename or "", data))
+
+    @app.post("/api/agent/sessions", status_code=201)
+    def create_agent_session(body: AgentTargetInput):
+        return agent.create(body)
+
+    @app.get("/api/agent/sessions/{session_id}")
+    def get_agent_session(session_id: str):
+        return agent.get(session_id)
+
+    @app.post("/api/agent/sessions/{session_id}/messages")
+    async def post_agent_message(session_id: str, body: AgentMessageInput):
+        return await agent.post(session_id, body)
+
+    @app.post("/api/agent/sessions/{session_id}/proposals/{proposal_id}/apply")
+    def apply_agent_proposal(session_id: str, proposal_id: str):
+        return agent.apply(session_id, proposal_id)
+
+    @app.post("/api/agent/sessions/{session_id}/proposals/{proposal_id}/discard")
+    def discard_agent_proposal(session_id: str, proposal_id: str):
+        return agent.discard(session_id, proposal_id)
 
     @app.post("/api/resumes/{resume_id}/resolve-issue")
     async def resolve_resume_issue(resume_id: str, body: ResolveIssueInput):

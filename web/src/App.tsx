@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, IntakeFields, request, Resume, Summary, unresolvedBlocking } from "./api";
+import { AgentTarget, api, clean, Content, emptyContent, GenerationJob, GenerationSummary, IntakeFields, request, Resume, Summary, unresolvedBlocking } from "./api";
 import { ModelSettings } from "./ModelSettings";
 import { GenerationPanel } from "./GenerationPanel";
 import { ManualReview } from "./ManualReview";
 import { EducationFields } from "./EducationFields";
 import { ExperienceFields } from "./ExperienceFields";
 import { QualityReport } from "./QualityReport";
-import { ChatPanel } from "./ChatPanel";
+import { AgentPanel } from "./AgentPanel";
 import { MaterialIntake } from "./MaterialIntake";
 import { RoleDirectionPicker } from "./RoleDirectionPicker";
 import { RoleDirection } from "./roleDirections";
@@ -256,6 +256,13 @@ export default function App() {
       setStatus(`${format.toUpperCase()} 已导出 · 版本 ${row.revision}`);
     });
   }
+  const selectedJob = jobId ? jobs.find(row => row.id === jobId) : undefined;
+  const agentTarget: AgentTarget | null = selectedJob ? {
+    type: "job", id: selectedJob.id, label: selectedJob.target_role || "生成任务", revision: 0, state: selectedJob.state,
+  } : record ? {
+    type: "resume", id: record.id, label: record.content.name || record.content.target_role || "未命名简历",
+    revision: record.revision, blockedReason: dirty ? "当前页面还有未保存的手工修改。请先保存，再让 Agent 基于最新版本工作。" : undefined,
+  } : null;
   return <div className="app-shell">
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
@@ -363,7 +370,9 @@ export default function App() {
       </>}
       </div>
     </main>
-    <ChatPanel modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onJob={id => showJob(id)}/>
+    <AgentPanel target={agentTarget} modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onApplied={row => {
+      adopt(row); showJob(null); void refreshList(); void refreshJobs(); setStatus(`Agent 修改已应用为版本 ${row.revision}，请重新审阅`);
+    }}/>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
     {resolution && <ManualReview key={`${resolution.record.id}-${resolution.issueIndex}-${resolution.record.revision}`} record={resolution.record} issueIndex={resolution.issueIndex} onClose={() => setResolution(null)} onEdit={editIssue} onDraft={() => { setResolution(null); void download("docx", true); }} onSaved={row => {
       adopt(row);

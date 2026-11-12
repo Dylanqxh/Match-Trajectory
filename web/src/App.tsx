@@ -6,6 +6,7 @@ import { ManualReview } from "./ManualReview";
 import { EducationFields } from "./EducationFields";
 import { ExperienceFields } from "./ExperienceFields";
 import { QualityReport } from "./QualityReport";
+import { ChatPanel } from "./ChatPanel";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -247,6 +248,9 @@ export default function App() {
         <span className="stage-chip">生成与交付 · M1.7</span></header>
       <div className="feedback" role="status">{interactionLocked ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
+      <div className="workbench">
+      <ChatPanel modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onJob={id => showJob(id)}/>
+      <div>
       {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
         onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
       {!record ? <section className="start-layout">
@@ -318,6 +322,8 @@ export default function App() {
           </div>
         </section></div>
       </>}
+      </div>
+      </div>
     </main>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
     {resolution && <ManualReview key={`${resolution.record.id}-${resolution.issueIndex}-${resolution.record.revision}`} record={resolution.record} issueIndex={resolution.issueIndex} onClose={() => setResolution(null)} onEdit={editIssue} onDraft={() => { setResolution(null); void download("docx", true); }} onSaved={row => {

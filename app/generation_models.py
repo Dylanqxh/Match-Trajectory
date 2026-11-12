@@ -210,6 +210,7 @@ class GenerationInput(StrictModel):
     career_stage: Literal["unspecified", "entry", "experienced", "transition"] = "unspecified"
     has_career_gap: bool = False
     execution_mode: Literal["legacy", "langgraph", "supervisor"] = "langgraph"
+    edit_request: Literal["none", "shorten", "restore_headcount"] = "none"
 
 
 class AnswerInput(StrictModel):

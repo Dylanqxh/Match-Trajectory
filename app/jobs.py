@@ -54,6 +54,8 @@ class JobStore:
                         comparable.pop("role_direction", None)
                     if "execution_mode" not in saved["input"] and comparable.get("execution_mode") == "langgraph":
                         comparable.pop("execution_mode", None)
+                    if "edit_request" not in saved["input"] and comparable.get("edit_request") in (None, "none"):
+                        comparable.pop("edit_request", None)
                     if fingerprint(comparable) != existing["input_hash"]:
                         raise Conflict("相同请求标识对应不同内容，请重新发起任务")
                 return saved

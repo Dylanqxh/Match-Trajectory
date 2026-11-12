@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.budget import DEFAULT_POLICY, budget_for_job
-from app.providers import ProviderConfig, ProviderError
+from app.providers import ProviderConfig, ProviderError, classify_provider_failure
 
 REQUEST_TIMEOUT = DEFAULT_POLICY.request_ms / 1000
 MAX_RESPONSE_BYTES = DEFAULT_POLICY.max_response_bytes
@@ -203,17 +203,21 @@ class ModelClient:
                 "Authorization": "Bearer " + config.api_key.get_secret_value(), "Accept-Encoding": "identity",
             }) as response:
                 if response.status_code != 200:
-                    messages = {401: "Key 无效，请重新连接模型", 403: "模型账户没有调用权限", 429: "模型额度不足或限流，请稍后继续"}
-                    raise ProviderError(messages.get(response.status_code, "模型服务调用失败，任务已保留，请检查地址或稍后继续"))
+                    from app.providers import _read_error_snippet, _without_secret
+
+                    snippet = await _read_error_snippet(response)
+                    category, message = classify_provider_failure(
+                        response.status_code, snippet, redirect=bool(response.is_redirect), during="generation")
+                    raise ProviderError(_without_secret(message, config), category)
                 if response.headers.get("content-encoding", "identity") != "identity":
-                    raise ProviderError("模型服务返回不支持的压缩响应，已停止读取")
+                    raise ProviderError("模型服务返回不支持的压缩响应，已停止读取", "model_unavailable")
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     if len(body) + len(chunk) > min(MAX_RESPONSE_BYTES, policy.max_response_bytes):
-                        raise ProviderError("模型响应过大，已停止读取，任务材料仍保留")
+                        raise ProviderError("模型响应过大，已停止读取，任务材料仍保留", "model_unavailable")
                     body.extend(chunk)
         except (httpx.TimeoutException, TimeoutError):
-            raise ProviderError("模型调用超时；本次可能已经计费，可稍后明确继续") from None
+            raise ProviderError("模型调用超时；本次可能已经计费，可稍后明确继续", "timeout") from None
         except httpx.HTTPError:
-            raise ProviderError("模型网络连接失败，任务已保留") from None
+            raise ProviderError("模型网络连接失败，任务已保留", "network") from None
         return body

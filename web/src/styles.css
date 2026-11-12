@@ -29,6 +29,18 @@
 .manual-evidence > span > span, .manual-evidence strong { display: block; }
 
 .education-fields{margin:16px 0;padding:12px 0;border-top:1px solid #dce4e0}.bullet-editor{margin-bottom:16px}.bullet-editor .field-help{margin-top:4px}.bullet-editor label.fine input{font-size:12px}
+.workbench{display:grid;grid-template-columns:minmax(300px,400px) minmax(0,1fr);gap:22px;align-items:start}
+.chat-panel{background:#fff;border:1px solid #e0e7de;border-radius:16px;padding:16px;display:flex;flex-direction:column;max-height:calc(100vh - 150px);position:sticky;top:16px}
+.chat-log{overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:220px;padding-right:4px}
+.chat-bubble{margin:0;border-radius:12px;padding:10px 12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-bubble.assistant{background:#f4f7f4}.chat-bubble.user{background:#e7f2ec;align-self:flex-end}
+.chat-compose{border-top:1px solid #e6ece6;padding-top:12px}
+.chat-preview{border:1px solid #dce5df;border-radius:10px;padding:10px;margin:8px 0;background:#fafbf9}
+.chat-gaps p{margin:6px 0 0}
+.chat-upload{position:relative;overflow:hidden;display:inline-flex;align-items:center;padding:11px 14px}
+.chat-upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.setup-steps{margin:0 0 12px;padding-left:18px;color:#4d6356;line-height:1.7}
+@media(max-width:900px){.workbench{grid-template-columns:1fr}.chat-panel{position:static;max-height:none}}
 
 .quality-report{margin:14px 0;padding:12px;border:1px solid #dce4e0;border-radius:8px;background:#f7faf8}.quality-report h3{margin:0 0 8px}.quality-report dl{font-size:12px;margin:8px 0}.quality-report dl>div{margin:10px 0}.quality-report dd{margin:4px 0 0}.quality-report small{display:block;color:#65736d;margin-top:4px;overflow-wrap:anywhere}
 .record-nav-row { display: flex; align-items: center; gap: 4px; }

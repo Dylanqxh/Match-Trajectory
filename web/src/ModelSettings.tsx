@@ -16,6 +16,7 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [connected, setConnected] = useState(false);
+  const [remember, setRemember] = useState(false);
   useEffect(() => {
     void api<{ configured: boolean; provider?: Choice; model?: string; base_url?: string }>("/api/model-settings").then(row => {
       if (row.configured && row.provider && row.provider in choices) {
@@ -29,9 +30,9 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     setBusy(true); setMessage("");
     try {
       const result = await api<{ message: string }>("/api/model-settings/test", {
-        provider, model, api_key: key, base_url: provider === "custom" ? baseUrl : "",
+        provider, model, api_key: key, base_url: provider === "custom" ? baseUrl : "", remember,
       });
-      setKey(""); setConnected(true); setMessage(result.message + "。Key 仅保留在本次服务会话中。");
+      setKey(""); setConnected(true); setMessage(result.message);
       onSaved?.();
     } catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
@@ -46,7 +47,8 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
   }
   return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="模型连接">
     <button className="close" onClick={onClose} disabled={busy} aria-label="关闭模型设置">×</button>
-    <div className="eyebrow">连接准备</div><h2>连接你选择的模型</h2>
+    <div className="eyebrow">首次连接</div><h2>连接你选择的模型</h2>
+    <ol className="setup-steps"><li>选择供应商</li><li>打开官方页面，创建并复制 Key</li><li>粘贴到下面并测试。失败时会说明下一步，不会显示 Key</li></ol>
     <p>此处只用合成短文本测试连接，不发送简历。开始生成时，才会发送你确认的材料。</p>
     <fieldset disabled={busy}>
       <label>供应商<select aria-label="供应商" value={provider} onChange={event => {
@@ -56,7 +58,8 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
       {provider === "custom" && <label>接口地址<input aria-label="接口地址" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://…/v1"/></label>}
       <label>API Key<input aria-label="API Key" type="password" autoComplete="new-password" value={key} onChange={e => setKey(e.target.value)} placeholder="粘贴你在供应商取得的 Key"/></label>
       <details><summary>高级：模型名称</summary><label>模型 ID<input aria-label="模型 ID" value={model} onChange={e => setModel(e.target.value)}/></label></details>
-      <button className="primary" onClick={test} disabled={!key || !model}>{busy ? "正在测试…" : "测试并保存到会话"}</button>
+      <label className="checkbox-label"><input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)}/>记住 Key（仅在系统钥匙串可用时保存；否则只留在本次服务内存，重启后要重填）</label>
+      <button className="primary" onClick={test} disabled={!key || !model}>{busy ? "正在测试…" : "测试连接"}</button>
       <details><summary>可选：智能修正策略</summary>
         <p className="fine">测试当前已保存模型的工具调用，不发送个人材料。额外发出1次模型请求，可能计费；重新连接后需重新测试。默认生成无需此测试。</p>
         <button className="secondary" onClick={testTools} disabled={!connected}>测试工具调用（1次模型请求）</button>

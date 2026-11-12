@@ -20,4 +20,9 @@ evaluation/authorized-cases.json
 web/dist/
 build/
 dist/
+.secrets/
+eval-samples/_internal/
+/bundles/
+*.zip
+*.7z
 

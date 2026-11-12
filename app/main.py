@@ -3,15 +3,19 @@ import secrets
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app import key_store, providers
+from app import uploads as upload_text
 from app.budget import DEFAULT_POLICY
+from app.chat import ChatMessageInput, ChatService
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
 from app.jobs import JobStore
@@ -38,6 +42,10 @@ class TakeoverRequest(RevisionRequest):
     acknowledged: bool
 
 
+class ProviderSetup(providers.ProviderConfig):
+    remember: bool = False
+
+
 def resource_root() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
@@ -51,6 +59,21 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     @asynccontextmanager
     async def lifespan(app):
+        remembered = key_store.load(data_dir)
+        if remembered:
+            try:
+                config = providers.ProviderConfig(provider=remembered["provider"], base_url=remembered["base_url"],
+                                                  model=remembered["model"], api_key=remembered["api_key"])
+                registry.register(config)
+                secret = remembered["api_key"]
+                app.state.provider = {"provider": config.provider, "base_url": config.base_url, "model": config.model,
+                                      "configured": True, "key_mask": "••••" + (secret[-4:] if len(secret) > 8 else ""),
+                                      "json_probe_passed": False, "resume_generation_verified": False, "key_storage": "keyring",
+                                      "message": "已从系统钥匙串恢复连接。"}
+                app.state.provider_key = secret
+                app.state.key_storage = "keyring"
+            except Exception:  # noqa: BLE001 -- a bad saved key must not stop startup or print the secret
+                app.state.key_storage = "memory"
         lifecycle.retry_cleanup()
         await workflow.start()
         try:
@@ -64,7 +87,9 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     app.state.data_dir = data_dir
     app.state.provider = None
     app.state.provider_key = None
+    app.state.key_storage = "memory"
     app.state.workflow = workflow
+    chat = ChatService(store.engine, workflow)
     session = secrets.token_urlsafe(32)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 
@@ -206,27 +231,47 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
             return JSONResponse({"detail": "中文字体未配置"}, status_code=404)
         return FileResponse(path, media_type="font/otf")
 
-    from app import providers
-
     @app.exception_handler(providers.ProviderError)
     async def provider_error_handler(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        detail = str(exc) or "模型服务调用失败"
+        secret = getattr(app.state, "provider_key", None)
+        if secret and secret in detail:
+            detail = detail.replace(secret, "••••")
+        return JSONResponse({"detail": detail, "category": getattr(exc, "category", "model_unavailable")}, status_code=422)
 
     @app.get("/api/model-settings")
     def model_settings():
         return {**(app.state.provider or {"configured": False, "resume_generation_verified": False}),
-                "tool_calls_verified": registry.supports_tools(registry.current)}
+                "tool_calls_verified": registry.supports_tools(registry.current),
+                "key_storage": app.state.key_storage}
 
     @app.get("/api/model-presets")
     def model_presets():
         return providers.PRESETS
 
     @app.post("/api/model-settings/test")
-    async def test_model_settings(body: providers.ProviderConfig):
+    async def test_model_settings(body: ProviderSetup):
         result = await providers.probe_provider(body)
         result["config_revision"] = registry.register(body)
-        app.state.provider, app.state.provider_key = result, body.api_key
+        secret = body.api_key.get_secret_value()
+        if body.remember:
+            storage = key_store.save(data_dir, body.provider, body.model, body.base_url, secret)
+            result["message"] += "。已保存到系统钥匙串，可随时清除。" if storage == "keyring" else "。本机没有可用的系统钥匙串，Key 只保留在本次服务内存中，重启后需要重新填写。"
+        else:
+            key_store.clear(data_dir)
+            storage = "memory"
+            result["message"] += "。Key 只保留在本次服务内存中，重启后需要重新填写。"
+        result["key_storage"] = storage
+        app.state.provider, app.state.provider_key, app.state.key_storage = result, secret, storage
         return result
+
+    @app.post("/api/model-settings/forget")
+    def forget_model_key():
+        key_store.clear(data_dir)
+        app.state.key_storage = "memory"
+        if isinstance(app.state.provider, dict):
+            app.state.provider["key_storage"] = "memory"
+        return {"cleared": True, "key_storage": "memory"}
 
     @app.post("/api/model-settings/test-tools")
     async def test_model_tools():
@@ -310,6 +355,23 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         if not body.acknowledged:
             raise ValueError("请明确确认已自行核对当前版本")
         return workflow.takeover(resume_id, body.expected_revision)
+
+    @app.post("/api/chat/sessions", status_code=201)
+    def create_chat():
+        return chat.create()
+
+    @app.get("/api/chat/sessions/{session_id}")
+    def get_chat(session_id: str):
+        return chat.get(session_id)
+
+    @app.post("/api/chat/sessions/{session_id}/messages")
+    async def post_chat(session_id: str, body: ChatMessageInput):
+        return await chat.post(session_id, body)
+
+    @app.post("/api/chat/uploads")
+    async def upload_material(file: Annotated[UploadFile, File()]):
+        data = await file.read()
+        return chat.save_upload(upload_text.extract_upload(file.filename or "", data))
 
     @app.post("/api/resumes/{resume_id}/resolve-issue")
     async def resolve_resume_issue(resume_id: str, body: ResolveIssueInput):

@@ -33,7 +33,9 @@ export interface GenerationJob extends GenerationSummary {
 }
 
 export async function request(path: string, options: RequestInit = {}): Promise<Response> {
-  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...options.headers } });
+  const headers = new Headers(options.headers);
+  if (!(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     const labels: Record<string, string> = { education: "教育经历", sections: "经历", items: "条目", name: "姓名", contact: "联系方式", school: "学校", degree: "学历", major: "专业", start_date: "开始时间", end_date: "结束时间", highlights: "重点短语", text: "正文" };
@@ -43,6 +45,17 @@ export async function request(path: string, options: RequestInit = {}): Promise<
   }
   return response;
 }
+export interface ChatMessage { role: "user" | "assistant"; text: string }
+export interface ChatSession {
+  id: string;
+  messages: ChatMessage[];
+  collected: { name: string; contact: string; target_role: string; role_direction: string; source_text: string; jd: string; career_stage: string };
+  job_id: string | null;
+  job_state: string | null;
+  questions: { id: string; text: string }[];
+  coverage_notes: string[];
+}
+export interface UploadPreview { id: string; text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string }
 export async function api<T>(path: string, body?: unknown, method = "POST"): Promise<T> {
   const response = await request(path, body === undefined ? {} : { method, body: JSON.stringify(body) });
   return response.json();

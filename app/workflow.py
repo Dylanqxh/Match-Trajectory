@@ -128,6 +128,12 @@ class Workflow(GenerationService):
                                             "不要输出没有材料的板块，也不要给空板块加缺口标记。"
                                             "某一条已经写了、但缺关键事实时，在该条末尾加【待补充：…】。"
                                             "同一事实出现两个口径时不要选边，加【待确认：…】。")
+            edit = (job.get("input") or {}).get("edit_request") or "none"
+            if edit == "shorten":
+                context["instructions"] += ("\n用户要求把过长的经历条目写短。只删重复和空话，保留原文里的动作、结果和数量。"
+                                            "不要新增原文没有的事实，不要把岗位差距写进正文。")
+            elif edit == "restore_headcount":
+                context["instructions"] += "\n用户要求保留原文里的人数字样。原文写了几人就保留几人；原文没有的人数不要编造。"
         if stage in ("review", "revise"):
             context["candidate"] = job["draft"]
         if stage == "revise":

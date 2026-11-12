@@ -176,11 +176,11 @@ class ChatService:
 
     def save_upload(self, extracted: dict) -> dict:
         row = {"id": uuid.uuid4().hex, **extracted}
-        payload = json.dumps({key: row[key] for key in ("id", "text", "reliable", "reason", "warnings", "pages", "kind")}, ensure_ascii=False)
+        payload = json.dumps({key: row.get(key) for key in ("id", "text", "reliable", "reason", "warnings", "pages", "kind", "name")}, ensure_ascii=False)
         with self.engine.begin() as connection:
             connection.execute(insert(uploads).values(id=row["id"], data=payload))
         return {"id": row["id"], "text": row["text"], "reliable": row["reliable"], "reason": row["reason"],
-                "warnings": row["warnings"], "pages": row["pages"], "kind": row["kind"]}
+                "warnings": row["warnings"], "pages": row["pages"], "kind": row["kind"], "name": row.get("name") or ""}
 
     def _consume(self, session: dict, text: str, source_update: str | None, job: dict | None) -> str:
         state = job["state"] if job else ""

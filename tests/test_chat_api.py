@@ -182,3 +182,31 @@ def test_docx_and_text_pdf_upload_return_correctable_text(tmp_path):
             "upload_id": preview["id"], "source_text": "使用 Java 完成查询接口。"})
         assert corrected.status_code == 200, corrected.text
         assert corrected.json()["collected"]["source_text"] == "使用 Java 完成查询接口。"
+
+
+def test_txt_legacy_doc_and_scanned_pdf_uploads(tmp_path):
+    sentence = "使用 Java 完成查询接口。"
+    with TestClient(create_app(tmp_path), base_url="http://127.0.0.1") as client:
+        client.get("/api/session")
+        utf8 = client.post("/api/chat/uploads", files={"file": ("简历.txt", sentence.encode(), "text/plain")})
+        assert utf8.status_code == 200, utf8.text
+        assert utf8.json()["reliable"] is True
+        assert sentence in utf8.json()["text"]
+        gbk = client.post("/api/chat/uploads", files={"file": ("resume.txt", sentence.encode("gbk"), "text/plain")})
+        assert gbk.json()["reliable"] is True
+        assert sentence in gbk.json()["text"]
+        legacy = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + sentence.encode("utf-16le")
+        doc = client.post("/api/chat/uploads", files={"file": ("resume.doc", legacy, "application/msword")})
+        assert doc.status_code == 200, doc.text
+        assert doc.json()["reliable"] is True
+        assert "查询接口" in doc.json()["text"]
+        noise = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes([0, 1]) * 80
+        rejected = client.post("/api/chat/uploads", files={"file": ("broken.doc", noise, "application/msword")})
+        assert rejected.json()["reliable"] is False
+        assert rejected.json()["text"] == ""
+        assert "粘贴" in rejected.json()["reason"]
+        scanned = client.post("/api/chat/uploads", files={"file": ("scan.pdf", _pdf(""), "application/pdf")})
+        assert scanned.json()["reliable"] is False
+        assert scanned.json()["text"] == ""
+        assert "扫描" in scanned.json()["reason"]
+        assert "粘贴" in scanned.json()["reason"]

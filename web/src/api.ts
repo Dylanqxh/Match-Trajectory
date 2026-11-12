@@ -55,7 +55,7 @@ export interface ChatSession {
   questions: { id: string; text: string }[];
   coverage_notes: string[];
 }
-export interface UploadPreview { id: string; text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string }
+export interface UploadPreview { id: string; text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string; name?: string }
 export async function api<T>(path: string, body?: unknown, method = "POST"): Promise<T> {
   const response = await request(path, body === undefined ? {} : { method, body: JSON.stringify(body) });
   return response.json();

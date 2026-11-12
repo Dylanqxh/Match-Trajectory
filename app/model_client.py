@@ -204,6 +204,44 @@ class ModelClient:
                 "category": category, "fields": fields, "response_chars": len(text)}, usage=safe_usage(envelope)) from None
         return Completion(value, safe_usage(envelope))
 
+    async def propose_edit(self, config: ProviderConfig, context: dict, schema: type[BaseModel]) -> Completion:
+        policy = budget_for_job({"budget_policy": context["_budget_policy"]} if "_budget_policy" in context else {})
+        system = (
+            str(context.get("instructions", ""))
+            + "\n当前阶段：agent_edit"
+            + "\n你是简历编辑 Agent，只能根据 current_content、evidence 和 user_request 提出修改。"
+            + "用户要求只表示编辑意图，不是新的事实证据。不得补充 evidence 中没有的数字、技能、责任、状态或结果。"
+            + "保留未被要求修改的结构和标识；不要输出姓名、联系方式或学校。"
+            + "只返回符合下面 JSON Schema 的 json 对象，不要解释 JSON 之外的内容。\n"
+            + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        )
+        user = json.dumps({key: value for key, value in context.items() if key not in ("instructions", "_budget_policy")}, ensure_ascii=False)
+        if len(user) + len(system) > policy.max_context_chars:
+            raise ProviderError("本次 Agent 上下文过长，请缩短对话或材料后重试；当前简历未改变")
+        payload = {"model": config.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "max_tokens": policy.max_output_tokens, "temperature": 0, "stream": False}
+        if config.provider in ("deepseek", "dashscope"):
+            payload["response_format"] = {"type": "json_object"}
+        if config.provider == "deepseek":
+            payload["seed"] = 0
+            payload["thinking"] = {"type": "disabled"}
+        body = await self._post(config, payload, policy)
+        envelope = {}
+        try:
+            envelope = json.loads(body)
+            choice = envelope["choices"][0]
+            if choice["finish_reason"] != "stop":
+                raise ModelOutputError("Agent 输出被截断，当前简历未改变", usage=safe_usage(envelope))
+            text = choice["message"]["content"]
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError
+            value = schema.model_validate_json(text)
+        except ModelOutputError:
+            raise
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError):
+            raise ModelOutputError("Agent 没有返回有效的修改提案，当前简历未改变", usage=safe_usage(envelope)) from None
+        return Completion(value, safe_usage(envelope))
+
     async def _post(self, config, payload, policy=DEFAULT_POLICY):
         endpoint = config.base_url if config.base_url.endswith("/chat/completions") else config.base_url + "/chat/completions"
         try:

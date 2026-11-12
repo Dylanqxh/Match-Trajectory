@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentPanel, AgentProposalCard, sameAgentTarget } from "./AgentPanel";
+import { activeAgentTarget } from "./App";
 import { AgentProposal } from "./api";
 
 const proposal: AgentProposal = {
@@ -61,5 +62,16 @@ describe("AgentPanel", () => {
       { type: "job", id: "job-1", label: "后端工程师", revision: 0, state: "queued" },
       { type: "job", id: "job-1", label: "后端工程师", revision: 0, state: "ready" },
     )).toBe(false);
+  });
+
+  it("binds an adopted generation task to the materialized resume version", () => {
+    const target = activeAgentTarget(
+      { id: "job-1", state: "ready", stage: "done", target_role: "后端研发", mode: "generate", adopted_resume_id: "resume-1" },
+      null,
+      [{ id: "resume-1", revision: 4, origin: "ai", name: "林然", target_role: "后端研发" }],
+      false,
+    );
+
+    expect(target).toEqual({ type: "resume", id: "resume-1", label: "林然", revision: 4 });
   });
 });

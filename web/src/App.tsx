@@ -13,6 +13,23 @@ import { RoleDirection } from "./roleDirections";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
+export function activeAgentTarget(selectedJob: GenerationSummary | undefined, record: Resume | null,
+  resumes: Summary[], dirty: boolean): AgentTarget | null {
+  if (selectedJob) {
+    const adopted = selectedJob.adopted_resume_id
+      ? resumes.find(row => row.id === selectedJob.adopted_resume_id)
+      : undefined;
+    if (adopted) return {
+      type: "resume", id: adopted.id, label: adopted.name || adopted.target_role || "未命名简历", revision: adopted.revision,
+    };
+    return { type: "job", id: selectedJob.id, label: selectedJob.target_role || "生成任务", revision: 0, state: selectedJob.state };
+  }
+  return record ? {
+    type: "resume", id: record.id, label: record.content.name || record.content.target_role || "未命名简历",
+    revision: record.revision, blockedReason: dirty ? "当前页面还有未保存的手工修改。请先保存，再让 Agent 基于最新版本工作。" : undefined,
+  } : null;
+}
+
 export default function App() {
   const [list, setList] = useState<Summary[]>([]);
   const [record, setRecord] = useState<Resume | null>(null);
@@ -257,12 +274,7 @@ export default function App() {
     });
   }
   const selectedJob = jobId ? jobs.find(row => row.id === jobId) : undefined;
-  const agentTarget: AgentTarget | null = selectedJob ? {
-    type: "job", id: selectedJob.id, label: selectedJob.target_role || "生成任务", revision: 0, state: selectedJob.state,
-  } : record ? {
-    type: "resume", id: record.id, label: record.content.name || record.content.target_role || "未命名简历",
-    revision: record.revision, blockedReason: dirty ? "当前页面还有未保存的手工修改。请先保存，再让 Agent 基于最新版本工作。" : undefined,
-  } : null;
+  const agentTarget = activeAgentTarget(selectedJob, record, list, dirty);
   return <div className="app-shell">
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>

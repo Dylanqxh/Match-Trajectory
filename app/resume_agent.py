@@ -25,7 +25,6 @@ from app.resume_layout import education_text, period_text, section_text
 from app.skill import build_evidence, load_skill, validate_draft
 from app.store import Conflict, NotFound, timestamp
 
-
 metadata = MetaData()
 agent_sessions = Table(
     "agent_sessions", metadata,
@@ -139,6 +138,11 @@ class AgentService:
                 or snapshot["target_token"] != proposal["target_token"]):
             raise Conflict("当前内容已变化，请基于最新版本重新提出修改")
         candidate = ResumeContent.model_validate(proposal["content"])
+        record = None
+        if target.target_type == "job":
+            record = self.workflow.adopt(target.target_id)
+            if record.revision != 1 or resume_hash(record.content) != snapshot["base_hash"]:
+                raise Conflict("生成候选已经被采用并修改，请打开最新简历后重试")
         agent_job = self._record_agent_job(snapshot, proposal)
         info = AIInfo(
             job_id=agent_job["id"], review_job_id=agent_job["id"], review_status="unreviewed",
@@ -146,9 +150,8 @@ class AgentService:
             source_map=proposal["source_map"], issues=proposal["issues"], quality=None,
         )
         if target.target_type == "job":
-            record = self.workflow.adopt(target.target_id)
-            if record.revision != 1 or resume_hash(record.content) != snapshot["base_hash"]:
-                raise Conflict("生成候选已经被采用并修改，请打开最新简历后重试")
+            if record is None:
+                raise Conflict("生成候选没有可应用的简历")
             saved = self.store.save(record.id, record.revision, candidate, ai=info)
             session.update(target_type="resume", target_id=saved.id)
         else:

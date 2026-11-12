@@ -6,14 +6,14 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.generation_service import GenerationService
 from app.generation_models import Draft
+from app.generation_service import GenerationService
 from app.jobs import JobStore
 from app.model_client import Completion, ModelRegistry
 from app.models import Item, ResumeContent, Section
 from app.providers import ProviderConfig
-from app.store import Conflict, ResumeStore
 from app.skill import build_evidence, load_skill
+from app.store import Conflict, ResumeStore
 
 
 def base_content():
@@ -58,6 +58,21 @@ def agent_service(tmp_path, output_text):
         store=store, jobs=jobs, registry=registry, client=client, adopt=generation.adopt,
     ))
     return service, store, client
+
+
+def ready_job(service):
+    evidence = [row.model_dump() for row in build_evidence("使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")]
+    draft = Draft.model_validate({"sections": [{"id": "project", "title": "项目经历", "kind": "project", "items": [
+        {"id": "query", "text": "使用 Java 完成查询接口。", "fact_ids": ["e1"]},
+    ]}]})
+    inputs = {"request_id": "generated-task-1", "name": "林然", "contact": "linran@example.com",
+              "target_role": "后端研发", "source_text": "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。",
+              "jd": "", "education": [], "career_stage": "unspecified", "has_career_gap": False,
+              "execution_mode": "langgraph", "allow_questions": False, "send_materials": True, "edit_request": "none"}
+    skill = load_skill("后端研发", role_direction="backend")
+    return service.jobs.create(inputs, service.registry.current, {}, skill, evidence,
+                               extra={"state": "ready", "stage": "done", "draft": draft.model_dump(),
+                                      "review": {"verdict": "pass", "issues": []}})
 
 
 def test_resume_agent_proposes_then_applies_a_new_revision_without_sending_header_fields(tmp_path):
@@ -124,19 +139,8 @@ def test_resume_agent_rejects_a_stale_proposal(tmp_path):
 def test_resume_agent_applies_a_generated_task_candidate_as_a_versioned_resume(tmp_path):
     from app.resume_agent import AgentMessageInput, AgentTargetInput
 
-    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
-    evidence = [row.model_dump() for row in build_evidence("使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")]
-    draft = Draft.model_validate({"sections": [{"id": "project", "title": "项目经历", "kind": "project", "items": [
-        {"id": "query", "text": "使用 Java 完成查询接口。", "fact_ids": ["e1"]},
-    ]}]})
-    inputs = {"request_id": "generated-task-1", "name": "林然", "contact": "linran@example.com",
-              "target_role": "后端研发", "source_text": "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。",
-              "jd": "", "education": [], "career_stage": "unspecified", "has_career_gap": False,
-              "execution_mode": "langgraph", "allow_questions": False, "send_materials": True, "edit_request": "none"}
-    skill = load_skill("后端研发", role_direction="backend")
-    job = service.jobs.create(inputs, service.registry.current, {}, skill, evidence,
-                              extra={"state": "ready", "stage": "done", "draft": draft.model_dump(),
-                                     "review": {"verdict": "pass", "issues": []}})
+    service, _store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    job = ready_job(service)
 
     session = service.create(AgentTargetInput(target_type="job", target_id=job["id"]))
     proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
@@ -145,6 +149,23 @@ def test_resume_agent_applies_a_generated_task_candidate_as_a_versioned_resume(t
     assert applied["resume"].revision == 2
     assert applied["session"]["target"]["type"] == "resume"
     assert applied["resume"].content.sections[0].items[0].text.endswith("300ms。")
+
+
+def test_job_apply_conflict_does_not_create_an_orphan_agent_job(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    job = ready_job(service)
+    session = service.create(AgentTargetInput(target_type="job", target_id=job["id"]))
+    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
+    adopted = service.workflow.adopt(job["id"])
+    store.save(adopted.id, adopted.revision, adopted.content.model_copy(update={"summary": "用户刚保存的新版本"}))
+    job_count = len(service.jobs.list())
+
+    with pytest.raises(Conflict, match="已经被采用并修改"):
+        service.apply(session["id"], proposed["proposal"]["id"])
+
+    assert len(service.jobs.list()) == job_count
 
 
 def api_transport(request):

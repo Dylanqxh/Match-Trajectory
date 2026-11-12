@@ -3,8 +3,16 @@ import { api, GenerationJob, Resume } from "./api";
 import { ResumeText } from "./ResumeText";
 import { QualityReport } from "./QualityReport";
 
-const stages: Record<string, string> = { plan: "整理材料与选材", draft: "起草简历", review: "独立审阅", revise: "修正事实与表达", supervise: "安排本轮修正重点" };
-const states: Record<string, string> = { queued: "等待执行", running: "正在处理", waiting_input: "补充一点信息", ready: "候选已保存", failed: "本次处理未完成", interrupted: "任务已中断", cancelled: "已取消" };
+const stages: Record<string, string> = { plan: "正在阅读材料", draft: "正在写初稿", review: "正在核对", revise: "正在修改措辞", supervise: "正在决定改哪里" };
+const states: Record<string, string> = { queued: "排队中", running: "正在生成", waiting_input: "想再问你一句", ready: "初稿好了", failed: "还没有生成完", interrupted: "中途停了", cancelled: "已取消" };
+
+function calmError(job: GenerationJob): string {
+  const raw = job.error || "";
+  if (/\/[A-Za-z0-9_<>]+|结构不匹配|脱敏|脱散|JSON|schema/i.test(raw)) {
+    return "这次没能把草稿整理成一份完整简历。材料都还在，没有把缺口写进正文。";
+  }
+  return raw;
+}
 function resumeDate(value?: string) {
   return (value || "").replace(/((?:19|20|21)\d{2})-(0[1-9]|1[0-2])/g, "$1.$2");
 }
@@ -44,24 +52,26 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
     await api(`/api/generation-jobs/${jobId}/${action}`, body); setRefresh(x => x + 1);
   }
   const canAdopt = job?.mode === "generate" && ["ready", "failed", "interrupted"].includes(job.state) && (job.draft || job.framework);
+  const gaps = job ? [...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index) : [];
+  const failure = job && ["failed", "interrupted"].includes(job.state) ? calmError(job) : "";
   return <section className="generation-panel" aria-label="AI 生成任务">
-    <div className="panel-title"><div><span className="eyebrow">AI RESUME</span><h2>{job?.draft ? "AI 候选简历" : "生成任务"}</h2></div>
-      <button className="text-button" onClick={onClose}>收起任务</button></div>
-    {error && <p className="error" role="alert">{error}<button onClick={() => setRefresh(x => x + 1)}>刷新状态</button></p>}
-    {!job && !error && <p>正在恢复任务状态…</p>}
+    <div className="panel-title"><div><span className="eyebrow">初稿</span><h2>{job?.draft ? "看看这版简历" : job?.state === "failed" ? "还没生成完" : "正在生成"}</h2></div>
+      <button className="text-button" onClick={onClose}>收起</button></div>
+    {error && <p className="error" role="alert">{error}<button onClick={() => setRefresh(x => x + 1)}>刷新</button></p>}
+    {!job && !error && <p className="chat-empty">正在打开这次生成…</p>}
     {job && <>
-      <div className="generation-state"><strong>{states[job.state] || job.state}</strong><span>{job.input.target_role} · {stages[job.stage]}</span></div>
-      {job.error && <p className="notice">{job.error}</p>}
-      {job.stop_reason && <p className="notice">{job.stop_reason}</p>}
+      <div className="generation-state"><strong>{states[job.state] || "处理中"}</strong><span>{job.input.target_role} · {stages[job.stage] || "整理材料"}</span></div>
+      {failure && <div className="generation-recover"><strong>{failure}</strong><p>可以回到材料区改一改再生成，也可以再试一次。已经写进正文的内容不会凭空补上缺口。</p></div>}
+      {job.stop_reason && !failure && <p className="notice">{job.stop_reason}</p>}
       {job.service_warning && <p className="notice">{job.service_warning}</p>}
-      {job.framework && <p>目前只有目标，没有可用于起草的个人事实。可以先采用空框架，或补充一段真实材料后重新生成。</p>}
-      {job.state === "waiting_input" && <div className="questions"><p>最多补问这一轮；想先看一版，可以直接跳过。</p>
+      {job.framework && <p>目前只有目标岗位，还没有可以写进简历的经历。可以先进入编辑器自己写，或补充一段真实材料后再生成。</p>}
+      {job.state === "waiting_input" && <div className="questions"><p>最多再问这一轮。可以直接回答，也可以跳过，先看完整初稿。</p>
         {job.plan?.questions.map(question => <label key={question.id}>{question.text}<textarea aria-label={question.text} rows={2} maxLength={4000}
           value={answers[question.id] || ""} onChange={e => setAnswers({ ...answers, [question.id]: e.target.value })}/></label>)}
-        <div className="button-row"><button className="primary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers, skip: false }))}>提交补充并生成</button>
-          <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，直接生成</button></div></div>}
-      {(job.coverage_notes?.length || job.plan?.gaps?.length) ? <div className="notice"><h3>材料缺口（不写入正文）</h3>
-        {[...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index).map(note => <p key={note}>{note}</p>)}</div> : null}
+        <div className="button-row"><button className="primary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers, skip: false }))}>提交并继续</button>
+          <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，先看初稿</button></div></div>}
+      {gaps.length > 0 && <div className="gap-notes"><h3>这些先别写进简历</h3><p>材料里还没写清的地方，只放在这里提醒你。不会自动补进正文。</p>
+        {gaps.map(note => <p key={note}>{note}</p>)}</div>}
       {job.draft && <div className="candidate-content">
         <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "事实审阅通过；写作质量见单独报告，仍需核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
         {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[resumeDate(row.start_date), resumeDate(row.end_date)].filter(Boolean).join(" — ")}</p>)}
@@ -75,20 +85,14 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       <div className="button-row generation-actions">
         {canAdopt && <button className="primary" disabled={busy} onClick={() => { if (beforeAdopt()) void act(async () => onAdopt(await api<Resume>(`/api/generation-jobs/${jobId}/adopt`, {}))); }}>
           {job.adopted_resume_id ? "打开已采用的简历" : job.framework ? "采用空框架" : "采用并进入编辑器"}</button>}
-        {["failed", "interrupted"].includes(job.state) && <button className="secondary" disabled={busy || job.continuation?.allowed === false} onClick={() => void act(() => command("resume"))}>继续任务（保留已用预算）</button>}
+        {["failed", "interrupted"].includes(job.state) && job.continuation?.allowed !== false && <button className="secondary" disabled={busy} onClick={() => void act(() => command("resume"))}>再试一次</button>}
         {["queued", "running", "waiting_input"].includes(job.state) && <button className="text-button" disabled={busy} onClick={() => void act(() => command("cancel"))}>取消任务</button>}
       </div>
       {["failed", "interrupted"].includes(job.state) && job.continuation && <p className="fine">{job.continuation.reason}</p>}
-      <details className="generation-details"><summary>查看材料依据与执行记录</summary>
-        <p>模型请求 {job.calls} / {job.budget_policy?.max_calls ?? 8} 次；内容修正 {job.revisions} / {job.budget_policy?.max_revisions ?? 2} 轮。费用以模型供应商账单为准。</p>
-        <p>执行上限 {(job.budget_policy?.total_ms ?? 180000) / 1000} 秒；策略版本 {job.budget_policy?.version || "兼容默认"}。等待回答不计时；次数限制不等于金额上限。</p>
-        <p>生成方式：{job.engine === "supervisor" ? "智能修正策略（试用）" : job.engine === "langgraph" ? "分阶段生成" : "兼容流程"}；已保存步骤 {job.step_receipts?.length || 0}。主管请求也计入总次数。</p>
-        <p>引用只表示使用了对应用户陈述，不表示系统已客观核实。</p>
-        {job.last_diagnostic && <div><strong>上次输出诊断：{({ schema: "字段结构不符合约定", invalid_json: "JSON 格式不完整", empty: "模型返回空白", truncated: "模型输出被截断", incomplete: "模型未完整输出", response_envelope: "响应封装异常", structure: "结构或引用检查未通过" } as Record<string, string>)[job.last_diagnostic.category] || "输出检查未通过"}</strong>
-          {job.last_diagnostic.fields.map((field, index) => <p key={index}>{field.path} · {field.rule ? ({ unique_ids: "段落标识重复", body_length: "正文超过长度限制", summary_id: "简介标识不符合约定", review_verdict: "审阅结论与问题列表不一致", question_decision: "补问决策与问题列表不一致", unique_question_ids: "问题标识重复", quality_status: "质量结论与改进动作不一致", quality_dimensions: "质量维度不完整或重复", quality_evidence: "质量意见缺少定位依据", quality_score: "质量评分与动作不一致" } as Record<string, string>)[field.rule] || field.type : field.type}</p>)}</div>}
-        <p>当前岗位规则：{job.skill?.role || "旧版"}；规则版本：{job.skill?.version || "未知"}</p>
-        {job.skill?.resources && <p>已加载参考：{job.skill.resources.join("、")}</p>}
-        {job.evidence.map(item => <p className="source-evidence" key={item.id}><strong>{item.id}</strong> {item.text}</p>)}
+      <details className="generation-details"><summary>查看用到的原文</summary>
+        <p>已请求模型 {job.calls} 次。费用以你选择的模型服务商账单为准。</p>
+        <p>这里的引用只说明用了你提供的哪句话，并不表示已经核实过。</p>
+        {job.evidence.map(item => <p className="source-evidence" key={item.id}>{item.text}</p>)}
       </details>
     </>}
   </section>;

@@ -185,12 +185,22 @@ class ModelClient:
         except (ValueError, KeyError, TypeError, IndexError):
             raise ModelOutputError("模型响应封装不完整或不是有效 JSON", diagnostic={"category": "response_envelope", "fields": []}) from None
         try:
-            value = schema.model_validate_json(text)
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ModelOutputError("模型返回的内容不是完整 JSON，未生成简历", diagnostic={
+                "category": "invalid_json", "fields": []}, usage=safe_usage(envelope)) from exc
+        if stage in ("draft", "revise") and isinstance(parsed, dict):
+            from app.draft_normalize import normalize_draft_payload
+
+            evidence = context.get("evidence") or []
+            known = [row.get("id") for row in evidence if isinstance(row, dict) and isinstance(row.get("id"), str)]
+            parsed = normalize_draft_payload(parsed, known)
+        try:
+            value = schema.model_validate(parsed)
         except ValidationError as exc:
             fields = safe_validation_fields(exc, schema)
             category = "invalid_json" if any(item["type"] == "json_invalid" for item in fields) else "schema"
-            locations = "、".join(dict.fromkeys(item["path"] for item in fields))
-            raise ModelOutputError(f"模型输出结构不匹配，需检查字段：{locations}；已记录脱敏诊断", diagnostic={
+            raise ModelOutputError("这次没能把草稿整理成一份完整简历。材料还在，可以再试一次。", diagnostic={
                 "category": category, "fields": fields, "response_chars": len(text)}, usage=safe_usage(envelope)) from None
         return Completion(value, safe_usage(envelope))
 

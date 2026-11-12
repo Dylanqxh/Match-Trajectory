@@ -130,16 +130,15 @@ class GenerationService:
         if job["state"] not in ("failed", "interrupted"):
             return {"allowed": False, "reason": "任务当前无需继续"}
         if job["calls"] >= policy.max_calls:
-            return {"allowed": False, "reason": f"该任务已使用 {policy.max_calls} 次模型调用，材料与候选保留；请新建任务"}
+            return {"allowed": False, "reason": "这次已经问过模型很多次，材料还在。请改一改材料后再生成。"}
         if job["elapsed_ms"] >= policy.total_ms:
-            return {"allowed": False, "reason": f"该任务累计执行达到 {policy.total_ms // 1000} 秒，材料与候选保留；请新建任务"}
+            return {"allowed": False, "reason": "这次花费的时间已经比较长，材料还在。请改一改材料后再生成。"}
         if job["stage"] in ("draft", "revise") and (job["calls"] >= policy.max_calls - 1 or job["elapsed_ms"] >= policy.total_ms - policy.review_reserve_ms):
-            return {"allowed": False, "reason": "剩余预算不足以生成并审阅新正文；已有候选保留，请新建任务或手工核对"}
+            return {"allowed": False, "reason": "剩下的次数不够再生成并核对一整版。已有内容还在，可以手工修改，或重新开始。"}
         key = f"{job['stage']}:{job['revisions']}"
         if job.get("invalid_outputs", {}).get(key, 0) >= policy.max_invalid_outputs and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
-            return {"allowed": False, "reason": f"当前阶段连续{policy.max_invalid_outputs}次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/{policy.max_calls} 次）。请查看诊断；新建任务前先确认问题已处理。"}
-        upgraded = job.get("output_contract_version", "legacy") != OUTPUT_CONTRACT_VERSION
-        return {"allowed": True, "reason": "输出校验已更新，可从失败阶段继续，已用次数和耗时不清零" if upgraded else "可从失败阶段继续，已用预算保留"}
+            return {"allowed": False, "reason": "连续两次没能整理成可用的简历，已先停下来。材料还在，可以改一改后再生成。"}
+        return {"allowed": True, "reason": "可以接着上次继续，已完成的部分会保留。"}
 
     def adopt(self, job_id):
         result = []

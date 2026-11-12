@@ -4,6 +4,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -45,6 +46,19 @@ class TakeoverRequest(RevisionRequest):
 
 class ProviderSetup(providers.ProviderConfig):
     remember: bool = False
+
+
+def is_local_page_origin(origin: str) -> bool:
+    parts = urlsplit(origin)
+    return (
+        parts.scheme == "http"
+        and parts.hostname in {"localhost", "127.0.0.1"}
+        and parts.username is None
+        and parts.password is None
+        and parts.path in {"", "/"}
+        and not parts.query
+        and not parts.fragment
+    )
 
 
 def resource_root() -> Path:
@@ -98,7 +112,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     async def local_session(request: Request, call_next):
         if request.url.path.startswith("/api/"):
             origin = request.headers.get("origin")
-            if origin and origin != str(request.base_url).rstrip("/"):
+            if origin and not is_local_page_origin(origin):
                 return JSONResponse({"detail": "仅接受本地页面的请求"}, status_code=403)
             if request.url.path != "/api/session":
                 cookie = request.cookies.get("mt_session", "")

@@ -6,6 +6,10 @@ const stateLabel: Record<string, string> = {
   ready: "初稿在左侧", failed: "可以继续", interrupted: "已中断", cancelled: "已取消",
 };
 
+export function assistantStartsOpen(savedPreference: string | null): boolean {
+  return savedPreference === "1";
+}
+
 export function ChatPanel({ modelReady, onOpenSettings, onJob }: {
   modelReady: boolean; onOpenSettings: () => void; onJob: (id: string) => void;
 }) {
@@ -16,7 +20,7 @@ export function ChatPanel({ modelReady, onOpenSettings, onJob }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [drag, setDrag] = useState(false);
-  const [open, setOpen] = useState(() => localStorage.getItem("mt_assistant_open") === "1");
+  const [open, setOpen] = useState(() => assistantStartsOpen(localStorage.getItem("mt_assistant_open")));
   const log = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewBox = useRef<HTMLDivElement>(null);

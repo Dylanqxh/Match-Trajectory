@@ -210,3 +210,46 @@ def test_txt_legacy_doc_and_scanned_pdf_uploads(tmp_path):
         assert scanned.json()["text"] == ""
         assert "扫描" in scanned.json()["reason"]
         assert "粘贴" in scanned.json()["reason"]
+
+
+def test_canvas_upload_satisfies_blank_fields_and_typed_values_win(tmp_path, monkeypatch):
+    source = "姓名：小林\n联系方式：job@example.com\n江城大学 本科 软件工程\n使用 Java 完成查询接口。"
+    client = open_client(tmp_path, monkeypatch, DRAFT_DECISION, {"draft": CLEAN, "revise": CLEAN})
+    try:
+        parsed = client.post("/api/intake/parse", json={"text": source})
+        assert parsed.status_code == 200, parsed.text
+        fields = parsed.json()
+        assert fields["name"] == "小林"
+        assert fields["contact"] == "job@example.com"
+        assert fields["education"][0]["school"] == "江城大学"
+        assert fields["education"][0]["degree"] == "本科"
+        assert fields["education"][0]["major"] == "软件工程"
+        noisy = client.post("/api/intake/parse", json={"text": "在江城大学实验室使用 Java 完成查询接口。"})
+        assert noisy.json()["education"] == []
+        assert noisy.json()["name"] == ""
+        jd = client.post("/api/intake/parse", json={"text": "姓名：无关\n岗位：Java 后端", "purpose": "jd"})
+        assert jd.json()["name"] == ""
+        assert jd.json()["target_role"] == "Java 后端"
+        created = client.post("/api/generation-jobs", json={
+            "request_id": "upload-only01", "target_role": "", "name": "", "contact": "",
+            "source_text": source, "send_materials": True,
+        })
+        assert created.status_code == 201, created.text
+        filled = created.json()["input"]
+        assert filled["name"] == "小林"
+        assert filled["contact"] == "job@example.com"
+        assert filled["education"][0]["school"] == "江城大学"
+        assert "查询接口" in filled["source_text"]
+        typed = client.post("/api/generation-jobs", json={
+            "request_id": "user-wins-001", "name": "手填", "contact": "hand@example.com", "target_role": "产品经理",
+            "education": [{"id": "edu1", "school": "手填大学", "degree": "硕士", "major": "设计"}],
+            "source_text": source, "jd": "岗位：Java 后端", "send_materials": True,
+        })
+        assert typed.status_code == 201, typed.text
+        chosen = typed.json()["input"]
+        assert chosen["name"] == "手填"
+        assert chosen["contact"] == "hand@example.com"
+        assert chosen["target_role"] == "产品经理"
+        assert chosen["education"][0]["school"] == "手填大学"
+    finally:
+        client.__exit__(None, None, None)

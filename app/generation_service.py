@@ -46,12 +46,13 @@ class GenerationService:
         pass
 
     def submit(self, inputs: GenerationInput):
+        from app.intake import complete_intake
+
+        inputs = complete_intake(inputs)
         if inputs.source_text and inputs.execution_mode == "supervisor" and not self.registry.supports_tools(self.registry.current):
             raise ValueError("请先在模型连接中测试工具调用能力，再启用智能修正策略")
         if inputs.source_text and not inputs.send_materials:
             raise ValueError("请先确认将材料发送给所选模型服务")
-        if inputs.source_text and (not inputs.name or not inputs.contact):
-            raise ValueError("请先填写姓名、联系方式和目标岗位；也可以使用化名及求职专用邮箱")
         config = self.registry.get(self.registry.current) if inputs.source_text else None
         skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap, inputs.role_direction)
         extra = None if inputs.source_text else {"state": "ready", "framework": True,

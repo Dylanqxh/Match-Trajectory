@@ -18,6 +18,7 @@ from app.budget import DEFAULT_POLICY
 from app.chat import ChatMessageInput, ChatService
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
+from app.intake import ParseRequest, parse_material
 from app.jobs import JobStore
 from app.lifecycle import Lifecycle
 from app.model_client import ModelClient, ModelRegistry
@@ -367,6 +368,10 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     @app.post("/api/chat/sessions/{session_id}/messages")
     async def post_chat(session_id: str, body: ChatMessageInput):
         return await chat.post(session_id, body)
+
+    @app.post("/api/intake/parse")
+    def parse_intake(body: ParseRequest):
+        return parse_material(body.text, purpose=body.purpose)
 
     @app.post("/api/chat/uploads")
     async def upload_material(file: Annotated[UploadFile, File()]):

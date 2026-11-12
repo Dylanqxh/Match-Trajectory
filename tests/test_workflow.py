@@ -579,12 +579,17 @@ def test_long_draft_triggers_bounded_editorial_revision_even_if_model_review_pas
     assert any(i["code"] == "quality" for i in model.calls[3][1]["issues_to_fix"])
 
 
-def test_generation_requires_basic_identity_before_paid_calls(tmp_path):
+def test_material_covers_blank_identity_and_typed_values_win(tmp_path):
     runner, _, _, _, model = setup(tmp_path, [])
-    payload = request().model_copy(update={"name": "", "contact": ""})
-    with pytest.raises(ValueError, match="姓名"):
-        runner.submit(payload)
+    source = "姓名：小林\n联系方式：job@example.com\n江城大学 本科 软件工程\n" + MATERIAL
+    filled = runner.submit(request().model_copy(update={"name": "", "contact": "", "education": [], "source_text": source}))
+    assert filled["input"]["name"] == "小林"
+    assert filled["input"]["contact"] == "job@example.com"
+    assert filled["input"]["education"][0]["school"] == "江城大学"
     assert model.calls == []
+    chosen = runner.submit(request().model_copy(update={"request_id": "request-0002", "name": "手填", "contact": "hand@example.com", "source_text": source}))
+    assert chosen["input"]["name"] == "手填"
+    assert chosen["input"]["contact"] == "hand@example.com"
 
 
 def test_reviewer_can_report_education_issues_without_structure_retry(tmp_path):

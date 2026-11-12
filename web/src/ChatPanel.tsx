@@ -133,7 +133,7 @@ export function ChatPanel({ modelReady, onOpenSettings, onJob }: {
         <div className={`drop-zone ${drag ? "drag" : ""}`} onDragOver={event => { event.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
           onDrop={event => { event.preventDefault(); setDrag(false); chooseFile(event.dataTransfer.files?.[0]); }}>
           <strong>{busy ? "正在读取文件…" : "添加简历或 JD"}</strong>
-          <span>拖入 PDF、Word 或 TXT，或点击选择。扫描版 PDF 请改为粘贴。</span>
+          <span>也可以在这里添加。中间的材料区同样能上传 PDF、Word 或 TXT。</span>
           <button className="secondary" type="button" disabled={busy} onClick={() => fileInput.current?.click()}>选择文件</button>
           <input ref={fileInput} className="file-input" aria-label="上传简历或 JD" type="file" accept=".pdf,.docx,.doc,.txt,.text,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain" disabled={busy}
             onChange={event => { chooseFile(event.target.files?.[0]); event.target.value = ""; }}/>

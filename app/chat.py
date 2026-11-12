@@ -251,14 +251,12 @@ class ChatService:
         notice = "已忽略要求把熟练度或岗位缺口写进正文的说法。正文只依据材料，并由原来的审阅流程处理。" if injected else ""
         if state in {"queued", "running"}:
             return (notice + " " if notice else "") + "上一份还在生成。完成后可以在旁边查看，也可以再说「把这段缩短」或「补上人数」。"
-        if edit and session["source_text"] and session["name"] and session["contact"] and session["target_role"] and state in {"ready", "failed", "interrupted", "cancelled", ""}:
+        if edit and session["source_text"] and state in {"ready", "failed", "interrupted", "cancelled", ""}:
             if state == "" and not session["job_id"]:
                 pass
             elif state:
                 return self._start(session, notice)
-        missing = [label for label, present in (
-            ("姓名（可以用化名）", session["name"]), ("联系方式", session["contact"]),
-            ("目标岗位", session["target_role"]), ("一段经历或旧简历", session["source_text"])) if not present]
+        missing = [] if session["source_text"] else ["一段经历或旧简历"]
         if missing:
             prefix = (notice + "\n") if notice else ""
             if session["skip_followups"] and not missing:

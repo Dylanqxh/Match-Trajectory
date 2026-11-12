@@ -200,7 +200,7 @@ class GenerationInput(StrictModel):
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,80}$")
     name: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
-    target_role: str = Field(min_length=1, max_length=80)
+    target_role: str = Field(default="", max_length=80)
     role_direction: Literal["product", "backend", "other"] | None = None
     source_text: str = Field(default="", max_length=20000)
     jd: str = Field(default="", max_length=8000)

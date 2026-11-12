@@ -72,6 +72,10 @@
 .chat-preview-actions span{margin-left:auto;color:#8c968e;font-size:11px}
 .chat-gaps{margin-bottom:8px}
 .chat-gaps p{margin:6px 0 0}
+.material-drops{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.optional-fields{margin-top:16px}
+.optional-fields summary{cursor:pointer;font-weight:650;color:#315f4e}
+.optional-fields label{margin-top:14px}
 .drop-zone{border:1.5px dashed #7eae98;background:#f3f8f5;border-radius:12px;padding:12px;text-align:center;margin-bottom:10px}
 .drop-zone.drag{background:#e5f2ea;border-color:#2e6249}
 .drop-zone strong{display:block;color:#244534;font-size:13px}

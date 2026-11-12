@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, request, Resume, Summary, unresolvedBlocking } from "./api";
+import { api, clean, Content, emptyContent, GenerationJob, GenerationSummary, IntakeFields, request, Resume, Summary, unresolvedBlocking } from "./api";
 import { ModelSettings } from "./ModelSettings";
 import { GenerationPanel } from "./GenerationPanel";
 import { ManualReview } from "./ManualReview";
@@ -7,6 +7,7 @@ import { EducationFields } from "./EducationFields";
 import { ExperienceFields } from "./ExperienceFields";
 import { QualityReport } from "./QualityReport";
 import { ChatPanel } from "./ChatPanel";
+import { MaterialIntake } from "./MaterialIntake";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -36,6 +37,7 @@ export default function App() {
   selectedRecordId.current = record?.id ?? null;
   selectedJobId.current = jobId;
   const interactionLocked = busy || Boolean(deleting);
+  const [recognized, setRecognized] = useState("");
   const [status, setStatus] = useState("正在连接本地工作台…");
   const [error, setError] = useState("");
   const [settings, setSettings] = useState(false);
@@ -112,9 +114,33 @@ export default function App() {
     const row = await api<Resume>(`/api/resumes/${record.id}`, { expected_revision: record.revision, content: clean(content) }, "PUT");
     adopt(row); await refreshList(); setStatus(`已保存版本 ${row.revision}`); return row;
   }
+  function hasEducation(rows: Content["education"]) {
+    return (rows || []).some(row => row.school.trim() || row.degree.trim() || row.major.trim());
+  }
+  async function useResume(text: string) {
+    const fields = await api<IntakeFields>("/api/intake/parse", { text, purpose: "resume" });
+    setSource(current => current.trim() && !text.includes(current.trim()) && !current.includes(text) ? `${text.trim()}\n${current.trim()}` : text.trim() || current);
+    setContent(current => ({ ...current,
+      name: current.name.trim() ? current.name : fields.name,
+      contact: current.contact.trim() ? current.contact : fields.contact,
+      target_role: current.target_role.trim() ? current.target_role : fields.target_role,
+      education: hasEducation(current.education) ? current.education : fields.education,
+    }));
+    const noted = [fields.name && `姓名 ${fields.name}`, fields.contact && "联系方式", fields.education[0]?.school, fields.target_role && `岗位 ${fields.target_role}`].filter(Boolean);
+    setRecognized(noted.length ? `已从简历带上：${noted.join("、")}。留空的项不用再填；你改过的以你填的为准。` : "简历已作为材料。下面的栏目都是选填。");
+    setStatus("简历材料已放进中间画布");
+  }
+  async function useJd(text: string) {
+    const fields = await api<IntakeFields>("/api/intake/parse", { text, purpose: "jd" });
+    setJd(current => current.trim() ? current : text.trim());
+    setContent(current => ({ ...current, target_role: current.target_role.trim() ? current.target_role : fields.target_role }));
+    setRecognized(fields.target_role ? `已从 JD 带上岗位「${fields.target_role}」。你填过的岗位不会被覆盖。` : "JD 已保存。没有写明岗位也可以直接生成。");
+    setStatus("JD 已放进中间画布");
+  }
   async function generate() {
     await action(async () => {
-      if (!content.name.trim() || !content.contact.trim() || !content.target_role.trim()) throw new Error("请先填写姓名、联系方式和目标岗位");
+      const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
+      if (!covered) throw new Error("请先上传一份简历或 JD，或在下面粘贴经历");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
       const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
         role_direction: roleDirection,
@@ -256,27 +282,32 @@ export default function App() {
       {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
         onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
       {!record ? <section className="start-layout">
-        <div className="welcome"><span className="eyebrow">从你已经做过的事开始</span><h2>把经历写清楚，<br/>让价值被看见。</h2>
-          <p>说清想投什么岗位，放入已有经历。AI 帮你选重点、整理表达，你来核对事实。</p>
-          <div className="feature-line"><span>01 提供线索</span><span>02 生成与核对</span><span>03 编辑导出</span></div>
+        <div className="welcome"><span className="eyebrow">从已有材料开始</span><h2>先放入简历，<br/>缺的再补一句。</h2>
+          <p>上传旧简历或 JD 就能生成。材料里已经有的姓名、联系方式、学校和经历不用重填；你手改过的以你填的为准。</p>
+          <div className="feature-line"><span>01 放入材料</span><span>02 生成与核对</span><span>03 局部修改</span></div>
           <button className="secondary" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => {
             adopt(await api<Resume>("/api/demo", {})); await refreshList();
           }); }}>先用虚构示例体验 →</button>
-          <p className="fine">不用准备完整档案，也不用提供 JD。材料少时可以先生成草稿，缺少的经历不会凭空补造。</p>
         </div>
         <form className="material-card" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
-          <h3>开始整理你的简历</h3><label>姓名<input required value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="如何称呼你"/></label>
+          <h3>放入材料</h3>
+          <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
+          {recognized && <p className="notice">{recognized}</p>}
+          <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
+          <p className="fine">姓名和联系方式留在本机字段里；教育会作为事实回填。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
+          <button className="primary full" type="submit">用这些材料生成</button>
+          <details className="optional-fields"><summary>手改或补充某一项（选填，材料里有的可以留空）</summary>
+          <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="留空则使用材料中的姓名"/></label>
           <label>简历方向<select aria-label="简历方向" value={roleDirection} onChange={e => setRoleDirection(e.target.value as "product" | "backend" | "other")}><option value="product">产品经理</option><option value="backend">后端</option><option value="other">其他（通用规则）</option></select></label>
-          <label>目标岗位<input required list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如 Java 后端、算法、产品经理"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
-          <p className="fine">规则只按上面的方向加载，不会从岗位名称猜测。产品经理和后端使用专项规则，其他方向使用通用规则。</p>
-          <label>联系方式<input required value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="必填：手机号或邮箱，可用求职专用联系方式"/></label>
-          <p className="fine">姓名、联系方式和目标岗位必填；学校与经历时间按事实填写，未知留空。</p>
+          <label>目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="留空则使用材料或 JD 中的岗位"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+          <p className="fine">方向只按你在这里的选择加载，不会从岗位名称猜测。</p>
+          <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="留空则使用材料中的手机或邮箱"/></label>
           <details><summary>求职背景（可选，用于调整写法）</summary>
             <label>求职阶段<select aria-label="求职阶段" value={careerStage} onChange={e => setCareerStage(e.target.value)}><option value="unspecified">不确定／通用</option><option value="entry">校招／初次求职</option><option value="experienced">社招／已有经验</option><option value="transition">转岗</option></select></label>
             <label className="checkbox-label"><input type="checkbox" checked={careerGap} onChange={e => setCareerGap(e.target.checked)}/>有职业空窗（可选，不必说明私人原因）</label>
           </details>
           <EducationFields rows={content.education || []} onChange={education => setContent({ ...content, education })}/>
-          <label>现有材料<textarea aria-label="现有材料" rows={7} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="课程、项目、工作、作品或活动都可以。写自己做了什么、用什么方法、有何交付或验证；不完整也可以。"/></label>
+          <label>现有材料<textarea aria-label="现有材料" rows={7} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="不上传也可以把经历粘贴在这里。上传后的文字会出现在这里，可再改。"/></label>
           <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
           <details><summary>有具体岗位 JD？可选填写</summary><label>岗位 JD<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)}/></label></details>
           <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
@@ -284,9 +315,7 @@ export default function App() {
             <label className="checkbox-label"><input type="checkbox" checked={useSupervisor} onChange={e => setUseSupervisor(e.target.checked)}/>启用智能修正策略（试用）</label>
             <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
           </details>
-          <label className="checkbox-label"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/>确认将材料和可选 JD 发送给所选模型服务</label>
-          <p className="fine">姓名和联系方式单独留在本机；教育信息和所选求职背景会作为材料发送。若正文里写了隐私，也会一并发送。{modelStatus}；模型调用可能计费。</p>
-          <button className="primary full" type="submit">AI 生成简历</button>
+          </details>
           <button className="text-button full" type="button" onClick={() => void action(async () => {
             adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
           })}>进入编辑器 →</button>

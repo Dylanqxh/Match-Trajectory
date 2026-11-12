@@ -2,7 +2,13 @@ import pytest
 
 
 @pytest.mark.parametrize(("direction", "expected"), [
-    ("product", "product"), ("backend", "backend"), ("other", "general"), (None, "general"),
+    ("product", "product"),
+    ("backend", "backend"),
+    ("algorithm", "algorithm"),
+    ("data-analysis", "data-analysis"),
+    ("operations", "operations"),
+    ("other", "general"),
+    (None, "general"),
 ])
 def test_role_rules_are_selected_without_becoming_personal_facts(direction, expected):
     from app.skill import load_skill
@@ -12,6 +18,14 @@ def test_role_rules_are_selected_without_becoming_personal_facts(direction, expe
     assert "不得" in skill.instructions
     assert "个人事实" in skill.instructions
     assert skill.version
+
+
+def test_pinned_role_keeps_the_frozen_skill_when_direction_changes():
+    from app.skill import load_skill
+
+    skill = load_skill("算法工程师", role_direction="product", pinned_role="algorithm")
+    assert skill.role == "algorithm"
+    assert "references/roles/algorithm.md" in skill.resources
 
 
 def test_source_ranges_preserve_original_text_and_restrictions():

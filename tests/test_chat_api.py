@@ -11,6 +11,17 @@ from tests_support import fixture_quality
 MATERIAL = "姓名：小林\n联系方式：job@example.com\n目标岗位：Java 后端\n学校：江城大学 本科 软件工程\n简历：\n使用 Java 完成查询接口。\n"
 
 
+def test_chat_direction_parser_covers_every_specialist_family():
+    from app.chat import _direction
+
+    assert _direction("产品经理", "") == "product"
+    assert _direction("后端研发", "") == "backend"
+    assert _direction("算法／Agent", "") == "algorithm"
+    assert _direction("数据分析", "") == "data-analysis"
+    assert _direction("内容运营", "") == "operations"
+    assert _direction("其他", "") == "other"
+
+
 def scripted_transport(plan, drafts):
     seen = []
 

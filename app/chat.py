@@ -70,14 +70,17 @@ def new_session() -> dict:
 
 
 def _direction(explicit: str, role: str) -> str:
-    if "产品" in explicit:
-        return "product"
-    if any(token in explicit for token in ("后端", "其他", "通用")):
-        return "backend" if "后端" in explicit else "other"
-    if "产品" in role:
-        return "product"
-    if any(token in role for token in ("后端", "Java", "java", "服务端", "Golang", "golang")):
-        return "backend"
+    value = explicit or role
+    families = (
+        ("product", ("产品",)),
+        ("backend", ("后端", "Java", "java", "服务端", "Golang", "golang")),
+        ("algorithm", ("算法", "Agent", "RAG", "NLP", "推荐", "搜索", "视觉")),
+        ("data-analysis", ("数据分析", "商业分析", "BI")),
+        ("operations", ("运营", "增长", "用户增长", "内容")),
+    )
+    for direction, tokens in families:
+        if any(token in value for token in tokens):
+            return direction
     return "other"
 
 

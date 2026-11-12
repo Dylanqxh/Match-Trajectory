@@ -15,8 +15,8 @@ description: Use when selecting, drafting, reviewing or revising a Chinese job-s
 
 ## 先建立这份简历的主线
 
-1. 从目标方向或 JD 找出 2—3 个最重要的考察点。考察点不是用户能力，不能把 JD 写成已经会的技能。
-2. 为每个考察点寻找原文证据：本人动作、方法或取舍、交付或验证。先选材再写句子。
+1. 先确定希望招聘方据此判断哪 2—3 项能力，再从目标方向或 JD 找出对应考察点。考察点不是用户能力，不能把 JD 写成已经会的技能。
+2. 为每个考察点建立来源映射：`考察点 → fact_id → 本人动作 → 交付／验证 → 未知项`。先选材、确认关系，再写句子；材料里相邻出现的动作不能自动拼成因果链或完整闭环。
 3. 项目和任职按「JD 相关度 × 证据强度」排列，日期只在强度相同时倒序。同一段经历内部的名称和起止日期必须一致，不能为了排序改日期。
 4. 让读者能回答：这个人能做哪类事，有何具体贡献，哪一点值得继续问。
 
@@ -44,15 +44,15 @@ description: Use when selecting, drafting, reviewing or revising a Chinese job-s
 | --- | --- |
 | plan | 选出核心证据，在 focus 说明要突出什么；gaps 写真实缺口。按价值决定是否问，不重复用户已给出的内容 |
 | draft | 用五块骨架和目标主线组织经历。自检是否只是把原文拉长、是否丢掉最强结果、是否照搬了负面句 |
-| review | 独立读取原文和候选：先给事实结论，再给四维写作质量。负面句照搬是写作问题，状态被写强才是事实阻断 |
-| revise | 按具体问题替换、合并或重排。可以删掉负面和无关句，不得把事实改强，不得补新技术、日期或成果 |
+| review | 独立读取原文和候选：把角色、范围、状态、结果口径和因果归因拆成原子主张，先给事实结论，再给四维写作质量。负面句照搬是写作问题，状态被写强才是事实阻断 |
+| revise | 按具体问题收窄越界主张，再替换、合并或重排。可以删掉负面和无关句，但应保留原文支持的本人动作与交付；不得补新技术、日期或成果 |
 
 ## 参考资料与加载路由
 
 由宿主按本次目标和阶段注入，模型无需自行读文件；未匹配岗位使用 general，不假装完成专项验证。
 - 所有阶段：本入口、references/contract.md、references/evidence/common.md、当前 references/roles/{岗位}.md、references/candidates/common.md。
 - 已明确校招／社招／转岗：叠加 candidates/entry.md、experienced.md 或 transition.md；明确有空窗时再叠加 returning.md，两者可同时存在。
-- plan：加载 references/questions.md；draft/revise：加载 references/editorial.md；review/revise：加载 references/quality-rubric.md；review 另加载 references/review-boundaries.md。
+- plan：加载 references/questions.md；draft/revise：加载 references/editorial.md；review/revise：加载 references/quality-rubric.md 与 references/claim-audit.md；review 另加载 references/review-boundaries.md。
 - 各阶段仅加载 examples/writing-boundaries.json 中当前岗位的合成对照例。示例用于学写法，其中事实和 ID 不属于用户。
 
 ## 必须守住的事实底线

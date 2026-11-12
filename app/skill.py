@@ -46,8 +46,8 @@ def load_skill(target_role: str, career_stage="unspecified", has_career_gap=Fals
     if has_career_gap:
         base.append("references/candidates/returning.md")
     extras = {"plan": ["references/questions.md"], "draft": ["references/editorial.md"],
-              "review": ["references/quality-rubric.md", "references/review-boundaries.md"],
-              "revise": ["references/editorial.md", "references/quality-rubric.md"]}
+              "review": ["references/quality-rubric.md", "references/review-boundaries.md", "references/claim-audit.md"],
+              "revise": ["references/editorial.md", "references/quality-rubric.md", "references/claim-audit.md"]}
     example_path = "examples/writing-boundaries.json"
     examples = json.loads((root / example_path).read_text(encoding="utf-8"))
     selected = [row for row in examples if row["role"] == role]

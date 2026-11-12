@@ -1,6 +1,6 @@
 # 简历 Skill 设计方案
 
-2026-11-05｜M1 写作教练基线；按开源项目定位调整首发范围、审阅分级与对照评测（尚未改运行 Skill）；反馈积累后置，真实供应商效果对照待验证，实际范围见 [README](../README.md)
+2026-11-12｜M1 写作教练基线；已补齐五方向显式路由，并把来源映射、原子主张审阅纳入运行 Skill；反馈积累后置，真实供应商效果对照待验证，实际范围见 [README](../README.md)
 
 相关文档：[产品方案](互联网求职简历Agent产品设计方案.md) · [下一迭代 PRD](PRD-下一迭代需求.md) · [Agent 架构](简历Agent架构设计方案.md)
 
@@ -47,6 +47,7 @@ skills/resume-writing/
   references/editorial.md          # 压缩与版面表达
   references/questions.md          # 一轮补问的分配
   references/review-boundaries.md  # 审阅误判边界
+  references/claim-audit.md        # 角色、范围、状态、结果与因果的原子主张审阅
   references/candidates/common.md  # 未知阶段的通用规则
   references/candidates/entry.md   # 校招
   references/candidates/experienced.md # 社招

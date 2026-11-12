@@ -29,6 +29,19 @@ def test_runtime_has_phase_routes_and_freezes_selected_resources():
     assert bundle.version != load_skill("Java 后端", role_direction="backend").version
 
 
+def test_atomic_claim_audit_is_loaded_only_for_review_and_revision():
+    from app.skill import load_skill
+
+    bundle = load_skill("产品经理", role_direction="product")
+    resource = "references/claim-audit.md"
+    assert resource not in bundle.stage_resources["plan"]
+    assert resource not in bundle.stage_resources["draft"]
+    assert resource in bundle.stage_resources["review"]
+    assert resource in bundle.stage_resources["revise"]
+    assert "角色与身份" in bundle.stage_instructions["review"]
+    assert "因果归因" in bundle.stage_instructions["revise"]
+
+
 def test_examples_cover_all_roles_without_publishing_evaluation_inputs_as_prompts():
     from pathlib import Path
 

@@ -57,5 +57,9 @@ describe("AgentPanel", () => {
       { type: "resume", id: "resume-1", label: "A", revision: 1 },
       { type: "resume", id: "resume-1", label: "A", revision: 1 },
     )).toBe(true);
+    expect(sameAgentTarget(
+      { type: "job", id: "job-1", label: "后端工程师", revision: 0, state: "queued" },
+      { type: "job", id: "job-1", label: "后端工程师", revision: 0, state: "ready" },
+    )).toBe(false);
   });
 });

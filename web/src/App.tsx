@@ -280,8 +280,8 @@ export default function App() {
         <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.7 · 分阶段生成与可信交付</small></div></div>
     </aside>
     <main className="main-area" inert={resolution ? true : undefined}>
-      <header className="topbar"><div><span className="eyebrow">RESUME WORKSPACE</span><h1>简历工作台</h1></div>
-        <span className="stage-chip">生成与交付 · M1.7</span></header>
+      <header className="topbar"><div><span className="eyebrow">MATCH · TRAJECTORY</span><h1>简历工作台</h1></div>
+        <span className="stage-chip">证据驱动 · 版本可回退</span></header>
       <div className="feedback" role="status">{interactionLocked ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
       {!modelStatus.startsWith("已连接") && <div className="setup-banner">

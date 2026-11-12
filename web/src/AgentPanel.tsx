@@ -2,7 +2,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { AgentApplyResponse, AgentProposal, AgentSession, AgentTarget, api, Resume } from "./api";
 
 export function sameAgentTarget(left: AgentTarget | null, right: AgentTarget | null): boolean {
-  return Boolean(left && right && left.type === right.type && left.id === right.id && left.revision === right.revision);
+  return Boolean(left && right && left.type === right.type && left.id === right.id
+    && left.revision === right.revision && left.state === right.state);
 }
 
 export function AgentProposalCard({ proposal, busy, onApply, onDiscard }: {
@@ -44,7 +45,7 @@ export function AgentPanel({ target, modelReady, onOpenSettings, onApplied }: {
       .then(row => { if (active && sameAgentTarget(currentTarget.current, requested)) setSession(row); })
       .catch(reason => { if (active && sameAgentTarget(currentTarget.current, requested)) setError((reason as Error).message); });
     return () => { active = false; };
-  }, [target?.type, target?.id, target?.revision]);
+  }, [target?.type, target?.id, target?.revision, target?.state]);
 
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [session?.messages.length]);
 

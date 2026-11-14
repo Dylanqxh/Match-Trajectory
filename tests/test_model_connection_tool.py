@@ -1,7 +1,12 @@
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def success_transport(request):
@@ -36,3 +41,17 @@ def test_diagnostic_probe_returns_the_safe_runtime_error_category():
 
     assert caught.value.category == "invalid_key"
     assert "diagnostic-secret" not in str(caught.value)
+
+
+def test_documented_direct_script_entrypoint_can_import_the_application():
+    result = subprocess.run(
+        [sys.executable, "tools/test_model_connection.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Chat Completions" in result.stdout

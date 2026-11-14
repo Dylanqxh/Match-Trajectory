@@ -5,6 +5,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.provider_protocols import normalize_endpoint
 from app.providers import ProviderConfig, ProviderError, probe_provider

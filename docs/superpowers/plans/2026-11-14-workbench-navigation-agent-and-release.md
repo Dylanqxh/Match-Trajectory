@@ -124,9 +124,9 @@
 **Interfaces:**
 - Extends: `AgentTraceItem` with `icon: string` and stable `detail` for completed/current stages.
 
-- [ ] Add failing tests for role icons, completed/current wording, repeated receipts, revision loops, and waiting-input state.
-- [ ] Implement accessible icons, a compact connected timeline, and status labels without exposing raw step IDs or prompts.
-- [ ] Run focused Vitest and typecheck; confirm GREEN.
+- [x] Add failing tests for role icons, completed/current wording, repeated receipts, revision loops, and waiting-input state.
+- [x] Implement accessible icons, a compact connected timeline, and status labels without exposing raw step IDs or prompts.
+- [x] Run focused Vitest and typecheck; confirm GREEN.
 
 ### Task 6: Loopback-only Docker Compose deployment
 

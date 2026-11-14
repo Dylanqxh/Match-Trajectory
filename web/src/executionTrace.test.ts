@@ -10,6 +10,7 @@ describe("buildAgentTrace", () => {
     ], "done", "ready");
 
     expect(result.map(row => row.agent)).toEqual(["材料分析 Agent", "简历写作 Agent", "事实审阅 Agent"]);
+    expect(result.map(row => row.icon)).toEqual(["🔎", "✍", "🛡"]);
     expect(result.every(row => row.status === "done")).toBe(true);
     expect(result[2].detail).toContain("第 3 次模型调用");
   });
@@ -23,5 +24,22 @@ describe("buildAgentTrace", () => {
     expect(result).toHaveLength(2);
     expect(result[0].status).toBe("done");
     expect(result[1]).toMatchObject({ agent: "简历写作 Agent", status: "running" });
+  });
+
+  it("keeps a real review-revise-review loop instead of collapsing different receipts", () => {
+    const result = buildAgentTrace([
+      { step: "review:0", step_id: "review:0", next_stage: "revise", state: "running", calls: 3 },
+      { step: "revise:0", step_id: "revise:0", next_stage: "review", state: "running", calls: 4 },
+      { step: "review:1", step_id: "review:1", next_stage: "done", state: "ready", calls: 5 },
+    ], "done", "ready");
+
+    expect(result.map(row => row.icon)).toEqual(["🛡", "✨", "🛡"]);
+    expect(result).toHaveLength(3);
+  });
+
+  it("explains that the current analysis agent is waiting for the user", () => {
+    const result = buildAgentTrace([], "plan", "waiting_input");
+
+    expect(result[0]).toMatchObject({ icon: "🔎", status: "running", detail: "等待你补充后继续" });
   });
 });

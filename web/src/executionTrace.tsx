@@ -8,18 +8,19 @@ export interface StepReceipt {
 
 export interface AgentTraceItem {
   id: string;
+  icon: string;
   agent: string;
   action: string;
   detail: string;
   status: "done" | "running";
 }
 
-const roles: Record<string, { agent: string; action: string }> = {
-  supervise: { agent: "调度 Agent", action: "判断下一步与修改范围" },
-  plan: { agent: "材料分析 Agent", action: "提取事实并规划简历结构" },
-  draft: { agent: "简历写作 Agent", action: "依据原文生成岗位化表达" },
-  review: { agent: "事实审阅 Agent", action: "核对引用、事实与写作质量" },
-  revise: { agent: "修改优化 Agent", action: "修正审阅发现的问题" },
+const roles: Record<string, { icon: string; agent: string; action: string }> = {
+  supervise: { icon: "🧭", agent: "调度 Agent", action: "判断下一步与修改范围" },
+  plan: { icon: "🔎", agent: "材料分析 Agent", action: "提取事实并规划简历结构" },
+  draft: { icon: "✍", agent: "简历写作 Agent", action: "依据原文生成岗位化表达" },
+  review: { icon: "🛡", agent: "事实审阅 Agent", action: "核对引用、事实与写作质量" },
+  revise: { icon: "✨", agent: "修改优化 Agent", action: "修正审阅发现的问题" },
 };
 
 function stageOf(receipt: StepReceipt): string {
@@ -39,7 +40,12 @@ export function buildAgentTrace(receipts: StepReceipt[] = [], currentStage = "",
   }
   const current = roles[currentStage];
   if (current && ["queued", "running", "waiting_input"].includes(jobState)) {
-    result.push({ id: `current:${currentStage}`, ...current, detail: current.action, status: "running" });
+    result.push({
+      id: `current:${currentStage}`,
+      ...current,
+      detail: jobState === "waiting_input" ? "等待你补充后继续" : current.action,
+      status: "running",
+    });
   }
   return result;
 }
@@ -52,7 +58,7 @@ export function AgentExecutionTrace({ receipts, currentStage, jobState }: {
   return <section className="agent-trace" aria-label="多 Agent 执行轨迹">
     <header><div><span>多 Agent 协作</span><strong>本次任务的真实执行轨迹</strong></div><small>{rows.filter(row => row.status === "done").length} 步已完成</small></header>
     <ol>{rows.map(row => <li className={row.status} key={row.id}>
-      <i aria-hidden="true"/><div><strong>{row.agent}</strong><span>{row.action}</span></div><em>{row.status === "done" ? "完成" : "进行中"}</em>
+      <i aria-hidden="true">{row.icon}</i><div><strong>{row.agent}</strong><span>{row.detail}</span></div><em>{row.status === "done" ? "完成" : "进行中"}</em>
     </li>)}</ol>
   </section>;
 }

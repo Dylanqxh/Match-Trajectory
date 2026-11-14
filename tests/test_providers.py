@@ -14,6 +14,18 @@ def test_popular_provider_presets_have_fixed_official_base_urls():
     assert ProviderConfig(provider="anthropic", model="claude-sonnet-5", api_key="test").base_url == "https://api.anthropic.com/v1"
 
 
+@pytest.mark.parametrize(("base_url", "protocol", "expected"), [
+    ("https://relay.example/v1", "openai_compatible", "https://relay.example/v1/chat/completions"),
+    ("https://relay.example/v1/", "openai_compatible", "https://relay.example/v1/chat/completions"),
+    ("https://relay.example/v1/chat/completions", "openai_compatible", "https://relay.example/v1/chat/completions"),
+    ("https://api.anthropic.com/v1", "anthropic", "https://api.anthropic.com/v1/messages"),
+])
+def test_provider_endpoint_normalization_is_shared_and_idempotent(base_url, protocol, expected):
+    from app.provider_protocols import normalize_endpoint
+
+    assert normalize_endpoint(base_url, protocol) == expected
+
+
 def test_probe_uses_only_synthetic_text_and_returns_no_secret():
     from app.providers import ProviderConfig, probe_provider
 

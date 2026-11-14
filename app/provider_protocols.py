@@ -6,9 +6,15 @@ def is_anthropic(config) -> bool:
     return config.provider == "anthropic"
 
 
+def normalize_endpoint(base_url: str, protocol: str = "openai_compatible") -> str:
+    """Resolve a configured base URL to the exact text-completion endpoint."""
+    base = base_url.rstrip("/")
+    suffix = "/messages" if protocol == "anthropic" else "/chat/completions"
+    return base if base.endswith(suffix) else base + suffix
+
+
 def request_endpoint(config) -> str:
-    suffix = "/messages" if is_anthropic(config) else "/chat/completions"
-    return config.base_url if config.base_url.endswith(suffix) else config.base_url + suffix
+    return normalize_endpoint(config.base_url, "anthropic" if is_anthropic(config) else "openai_compatible")
 
 
 def request_headers(config) -> dict[str, str]:

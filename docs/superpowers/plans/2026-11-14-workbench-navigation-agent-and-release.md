@@ -65,11 +65,11 @@
 - Produces: `normalize_endpoint(base_url: str, protocol: str = "openai_compatible") -> str` used by both runtime and diagnostic output.
 - Produces: `run_probe(base_url: str, model: str, api_key: str, *, transport=None) -> dict` and an interactive CLI using `getpass.getpass`.
 
-- [ ] Add failing tests for base `/v1`, full `/chat/completions`, trailing slash, safe success output, classified failure, and absence of the key from stdout/stderr/files.
-- [ ] Run `python -m pytest tests/test_model_connection_tool.py tests/test_providers.py -q` and confirm RED.
-- [ ] Centralize endpoint normalization and implement the diagnostic CLI with interactive prompts plus optional `--base-url` and `--model` flags; never accept the key as a CLI flag.
-- [ ] Document Windows PowerShell and macOS/Linux invocation and the fact that it tests OpenAI-compatible Chat Completions only.
-- [ ] Run focused Pytest and Ruff; confirm GREEN.
+- [x] Add failing tests for base `/v1`, full `/chat/completions`, trailing slash, safe success output, classified failure, and absence of the key from stdout/stderr/files.
+- [x] Run `python -m pytest tests/test_model_connection_tool.py tests/test_providers.py -q` and confirm RED.
+- [x] Centralize endpoint normalization and implement the diagnostic CLI with interactive prompts plus optional `--base-url` and `--model` flags; never accept the key as a CLI flag.
+- [x] Document Windows PowerShell and macOS/Linux invocation and the fact that it tests OpenAI-compatible Chat Completions only.
+- [x] Run focused Pytest and Ruff; confirm GREEN.
 
 ### Task 3: Agent presentation-only edits
 

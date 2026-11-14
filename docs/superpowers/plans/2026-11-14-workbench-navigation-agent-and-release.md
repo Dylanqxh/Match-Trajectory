@@ -84,11 +84,11 @@
 - Produces: proposal changes with optional `presentation_before: list[str]` and `presentation_after: list[str]`.
 - Preserves: existing CAS apply/undo and evidence gates for semantic changes.
 
-- [ ] Add failing service tests for metric-only highlighting, highlight removal, mixed wording/highlight edits, invalid highlights, and unsupported factual additions.
-- [ ] Run `python -m pytest tests/test_resume_agent.py -q` and confirm presentation-only edits are currently treated as unchanged.
-- [ ] Preserve validated candidate highlights, include them in diff detection, and exempt only pure presentation changes from new-reference requirements.
-- [ ] Update the Agent prompt to state that literal highlights are allowed and add UI copy/diff rendering for presentation changes.
-- [ ] Run focused Python/Web tests and typecheck; confirm GREEN.
+- [x] Add failing service tests for metric-only highlighting, highlight removal, mixed wording/highlight edits, invalid highlights, and unsupported factual additions.
+- [x] Run `python -m pytest tests/test_resume_agent.py -q` and confirm presentation-only edits are currently treated as unchanged.
+- [x] Preserve validated candidate highlights, include them in diff detection, and exempt only pure presentation changes from new-reference requirements.
+- [x] Update the Agent prompt to state that literal highlights are allowed and add UI copy/diff rendering for presentation changes.
+- [x] Run focused Python/Web tests and typecheck; confirm GREEN.
 
 ### Task 4: Resume-owned workspace navigation
 

@@ -218,6 +218,7 @@ class ModelClient:
             + "\n你是简历编辑 Agent，只能根据 current_content、evidence 和 user_request 提出修改。"
             + "用户要求只表示编辑意图，不是新的事实证据。不得补充 evidence 中没有的数字、技能、责任、状态或结果。"
             + "保留未被要求修改的结构和标识；不要输出姓名、联系方式或学校。"
+            + "可以按用户要求调整 items.highlights：每条最多两处，只能逐字引用当前 item.text 中的短语；纯加粗不需要改写正文。"
             + "只返回符合下面 JSON Schema 的 json 对象，不要解释 JSON 之外的内容。\n"
             + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         )

@@ -28,15 +28,18 @@ def base_content():
 
 
 class ScriptedEditClient:
-    def __init__(self, text, before_return=None):
+    def __init__(self, text, before_return=None, highlights=None):
         self.text = text
         self.before_return = before_return
+        self.highlights = highlights
         self.contexts = []
 
     async def propose_edit(self, config, context, schema):
         self.contexts.append(context)
         current = ResumeContent.model_validate(context["current_content"])
         current.sections[0].items[0].text = self.text
+        if self.highlights is not None:
+            current.sections[0].items[0].highlights = self.highlights
         if self.before_return:
             self.before_return()
         return Completion(schema(
@@ -141,6 +144,79 @@ def test_resume_agent_does_not_create_a_revision_for_a_noop_response(tmp_path):
     assert result["session"]["proposal"]["state"] == "unchanged"
     assert result["session"]["can_undo"] is False
     assert store.get(record.id).revision == 1
+
+
+def test_resume_agent_applies_metric_highlights_without_rewriting_text(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    text = "将接口准确率提升至 99.8%，处理效率提升 35%。"
+    service, store, client = agent_service(tmp_path, text)
+    client.highlights = ["99.8%", "提升 35%"]
+    content = base_content()
+    content.sections[0].items[0].text = text
+    record = store.create(content, "manual", source_text=text)
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="把百分比和提升指标加粗")))
+
+    assert result["resume"].revision == 2
+    assert result["resume"].content.sections[0].items[0].text == text
+    assert result["resume"].content.sections[0].items[0].highlights == ["99.8%", "提升 35%"]
+    assert result["session"]["proposal"]["changes"][0]["presentation_before"] == []
+    assert result["session"]["proposal"]["changes"][0]["presentation_after"] == ["99.8%", "提升 35%"]
+
+
+def test_resume_agent_can_remove_an_existing_highlight_without_rewriting_text(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    text = "将接口准确率提升至 99.8%。"
+    service, store, client = agent_service(tmp_path, text)
+    client.highlights = []
+    content = base_content()
+    content.sections[0].items[0].text = text
+    content.sections[0].items[0].highlights = ["99.8%"]
+    record = store.create(content, "manual", source_text=text)
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="取消这条的加粗")))
+
+    assert result["resume"].content.sections[0].items[0].highlights == []
+    assert result["session"]["proposal"]["changes"][0]["presentation_before"] == ["99.8%"]
+    assert result["session"]["proposal"]["changes"][0]["presentation_after"] == []
+
+
+def test_agent_edit_output_rejects_a_highlight_that_is_not_literal_text():
+    from app.resume_agent import AgentEditOutput
+
+    content = base_content().model_dump()
+    content["sections"][0]["items"][0]["highlights"] = ["不存在的指标"]
+
+    with pytest.raises(ValueError, match="重点必须是当前正文中的短语"):
+        AgentEditOutput(reply="已处理", content=content, reasons=[])
+
+
+def test_resume_agent_applies_section_reordering_without_rewriting_facts(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    service, store, client = agent_service(tmp_path, "使用 Java 完成查询接口。")
+    content = base_content()
+    content.sections.append(Section(id="skills", title="专业技能", kind="skills", items=[
+        Item(id="skill-java", text="Java 基础。"),
+    ]))
+    record = store.create(content, "manual", source_text="使用 Java 完成查询接口。Java 基础。")
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+
+    async def reorder(config, context, schema):
+        candidate = ResumeContent.model_validate(context["current_content"])
+        candidate.sections = list(reversed(candidate.sections))
+        return Completion(schema(reply="已调整板块顺序。", content=candidate, reasons=[]), {})
+
+    client.propose_edit = reorder
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="把专业技能放到项目经历前面")))
+
+    assert result["resume"].revision == 2
+    assert [row.id for row in result["resume"].content.sections] == ["skills", "project"]
+    assert result["session"]["proposal"]["changes"][0]["item_id"] == "document"
 
 
 def test_resume_agent_rejects_a_stale_auto_apply_without_overwriting_manual_work(tmp_path):

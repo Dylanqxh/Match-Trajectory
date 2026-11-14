@@ -48,7 +48,7 @@ export async function request(path: string, options: RequestInit = {}): Promise<
 export interface ChatMessage { role: "user" | "assistant"; text: string }
 export interface UploadPreview { text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string; name?: string }
 export interface AgentTarget { type: "resume" | "job"; id: string; label: string; revision: number; state?: string | null; blockedReason?: string }
-export interface AgentChange { item_id: string; before: string; after: string; reason: string; evidence_ids: string[] }
+export interface AgentChange { item_id: string; before: string; after: string; reason: string; evidence_ids: string[]; presentation_before?: string[]; presentation_after?: string[] }
 export interface AgentProposal {
   id: string; state: "ready" | "blocked" | "applied" | "discarded" | "undone" | "unchanged"; base_revision: number;
   changes: AgentChange[]; issues: GenerationIssue[]; content?: Content;

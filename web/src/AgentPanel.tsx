@@ -12,9 +12,12 @@ export function AgentProposalCard({ proposal }: { proposal: AgentProposal }) {
     <div className="agent-proposal-title"><div><span>{blocked ? "本次未保存" : "已自动保存"}</span><strong>{proposal.changes.length} 处改动</strong></div>
       <em>{blocked ? "存在事实风险" : `源自 v${proposal.base_revision}`}</em></div>
     {proposal.changes.map(change => <article className="agent-diff" key={change.item_id}>
-      <div><span>修改前</span><p>{change.before || "（新增内容）"}</p></div>
-      <div className="after"><span>修改后</span><p>{change.after || "（删除内容）"}</p></div>
-      <footer><strong>{change.reason}</strong><small>{change.evidence_ids.length ? `引用 ${change.evidence_ids.length} 段原文` : "没有原文引用"}</small></footer>
+      {change.before !== change.after && <><div><span>修改前</span><p>{change.before || "（新增内容）"}</p></div>
+        <div className="after"><span>修改后</span><p>{change.after || "（删除内容）"}</p></div></>}
+      {(change.presentation_before || change.presentation_after) && <div className="agent-presentation"><span>显示样式</span>
+        {Boolean(change.presentation_before?.length) && <p>取消重点：{change.presentation_before?.join("、")}</p>}
+        {Boolean(change.presentation_after?.length) && <p>加粗重点：{change.presentation_after?.join("、")}</p>}</div>}
+      <footer><strong>{change.reason}</strong><small>{change.before === change.after ? "仅调整显示样式" : change.evidence_ids.length ? `引用 ${change.evidence_ids.length} 段原文` : "没有原文引用"}</small></footer>
     </article>)}
     {proposal.issues.length > 0 && <div className="agent-risk"><strong>未写入简历</strong>{proposal.issues.map((issue, index) => <p key={index}>{issue.message}</p>)}</div>}
   </section>;

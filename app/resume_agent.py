@@ -66,6 +66,21 @@ def _blocks(content: ResumeContent) -> dict[str, str]:
     return rows
 
 
+def _presentations(content: ResumeContent) -> dict[str, list[str]]:
+    return {item.id: list(item.highlights) for section in content.sections for item in section.items}
+
+
+def _structure(content: ResumeContent) -> tuple:
+    return (
+        tuple(row.id for row in content.education),
+        tuple((section.id, section.kind, tuple(item.id for item in section.items)) for section in content.sections),
+    )
+
+
+def _structure_label(content: ResumeContent) -> str:
+    return " → ".join(section.title for section in content.sections) or "（无经历板块）"
+
+
 def _issue_key(issue) -> tuple[str, str, str]:
     return issue.item_id, issue.code, issue.message
 
@@ -283,12 +298,16 @@ class AgentService:
         schools = {row.id: row.school for row in base.education}
         for row in candidate.education:
             row.school = schools.get(row.id, "")
-        highlights = {item.id: item.highlights for section in base.sections for item in section.items}
-        for section in candidate.sections:
-            for item in section.items:
-                item.highlights = [value for value in highlights.get(item.id, []) if value in item.text]
         before, after = _blocks(base), _blocks(candidate)
-        changed = [item_id for item_id in dict.fromkeys([*before, *after]) if before.get(item_id, "") != after.get(item_id, "")]
+        presentation_before, presentation_after = _presentations(base), _presentations(candidate)
+        changed = [item_id for item_id in dict.fromkeys([*before, *after, *presentation_before, *presentation_after])
+                   if (before.get(item_id, "") != after.get(item_id, "")
+                       or presentation_before.get(item_id, []) != presentation_after.get(item_id, []))]
+        if _structure(base) != _structure(candidate):
+            before["document"], after["document"] = _structure_label(base), _structure_label(candidate)
+            changed.insert(0, "document")
+        semantic_changes = {item_id for item_id in changed if before.get(item_id, "") != after.get(item_id, "")}
+        semantic_changes.discard("document")
         reasons = {row.item_id: row for row in output.reasons}
         known = {row["id"] for row in snapshot["evidence"]}
         changes, source_map = [], copy.deepcopy(snapshot["source_map"])
@@ -296,8 +315,12 @@ class AgentService:
             reason = reasons.get(item_id)
             refs = [ref for ref in (reason.evidence_ids if reason else source_map.get(item_id, [])) if ref in known]
             source_map[item_id] = refs
-            changes.append({"item_id": item_id, "before": before.get(item_id, ""), "after": after.get(item_id, ""),
-                            "reason": reason.reason if reason else "按你的要求调整", "evidence_ids": refs})
+            change = {"item_id": item_id, "before": before.get(item_id, ""), "after": after.get(item_id, ""),
+                      "reason": reason.reason if reason else "按你的要求调整", "evidence_ids": refs}
+            if presentation_before.get(item_id, []) != presentation_after.get(item_id, []):
+                change.update(presentation_before=presentation_before.get(item_id, []),
+                              presentation_after=presentation_after.get(item_id, []))
+            changes.append(change)
         candidate_draft = content_draft(candidate, snapshot["evidence"], source_map)
         base_draft = content_draft(base, snapshot["evidence"], snapshot["source_map"])
         candidate_issues = [*validate_draft(candidate_draft, [Evidence.model_validate(row) for row in snapshot["evidence"]]),
@@ -308,7 +331,7 @@ class AgentService:
         ]}
         issues = [issue.model_dump() for issue in candidate_issues
                   if _issue_key(issue) not in base_issue_keys and (issue.item_id in changed or issue.item_id == "document")]
-        if any(change["after"] and not change["evidence_ids"] for change in changes):
+        if any(change["item_id"] in semantic_changes and change["after"] and not change["evidence_ids"] for change in changes):
             issues.append({"item_id": "document", "severity": "blocking", "code": "reference",
                            "message": "Agent 修改没有对应原文引用，不能应用。", "suggestion": "请缩小修改范围或补充真实材料。",
                            "repair_action": "need_input"})

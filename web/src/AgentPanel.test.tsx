@@ -49,6 +49,16 @@ describe("AgentPanel", () => {
     expect(html).toContain("500ms");
   });
 
+  it("shows presentation-only highlight changes as an applied edit", () => {
+    const html = renderToStaticMarkup(<AgentProposalCard proposal={{ ...proposal, state: "applied", changes: [{
+      item_id: "query", before: "准确率达到 99.8%", after: "准确率达到 99.8%", reason: "突出量化结果", evidence_ids: [],
+      presentation_before: [], presentation_after: ["99.8%"],
+    }] }}/>);
+
+    expect(html).toContain("加粗重点");
+    expect(html).toContain("99.8%");
+  });
+
   it("explains that a risky change was not saved and allows a new instruction", () => {
     const html = renderToStaticMarkup(<AgentProposalCard proposal={{ ...proposal, state: "blocked", issues: [{
       item_id: "query", severity: "blocking", code: "reference", message: "缺少原文依据",

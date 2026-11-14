@@ -167,7 +167,8 @@ class AgentService:
             record = self.workflow.adopt(target.target_id)
             if record.revision != 1 or resume_hash(record.content) != snapshot["base_hash"]:
                 raise Conflict("生成候选已经被采用并修改，请打开最新简历后重试")
-        agent_job = self._record_agent_job(snapshot, proposal)
+        related_resume_id = record.id if record is not None else target.target_id
+        agent_job = self._record_agent_job(snapshot, proposal, related_resume_id)
         info = AIInfo(
             job_id=agent_job["id"], review_job_id=agent_job["id"], review_status="unreviewed",
             content_hash=resume_hash(candidate), skill_version=agent_job["skill"]["version"],
@@ -341,7 +342,7 @@ class AgentService:
                 "content": candidate.model_dump(), "changes": changes, "issues": issues, "source_map": source_map,
                 "created_at": timestamp()}
 
-    def _record_agent_job(self, snapshot: dict, proposal: dict) -> dict:
+    def _record_agent_job(self, snapshot: dict, proposal: dict, resume_id: str) -> dict:
         inputs = {"request_id": proposal["id"], "name": snapshot["content"].name,
                   "contact": snapshot["content"].contact, "target_role": snapshot["content"].target_role,
                   "source_text": snapshot["source_text"], "jd": snapshot["job"].get("input", {}).get("jd", ""),
@@ -349,7 +350,7 @@ class AgentService:
                   "career_stage": snapshot["job"].get("input", {}).get("career_stage", "unspecified"),
                   "has_career_gap": snapshot["job"].get("input", {}).get("has_career_gap", False),
                   "execution_mode": "langgraph", "allow_questions": False, "send_materials": True,
-                  "edit_request": "none"}
+                  "edit_request": "none", "review_resume_id": resume_id}
         skill = SimpleSkill(snapshot["skill"])
         config = self.registry.get(self.registry.current)
         draft = content_draft(ResumeContent.model_validate(proposal["content"]), snapshot["evidence"], proposal["source_map"])

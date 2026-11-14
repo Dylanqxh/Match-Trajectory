@@ -11,6 +11,7 @@ import { RoleDirectionPicker } from "./RoleDirectionPicker";
 import { RoleDirection } from "./roleDirections";
 import { ResumeEditor } from "./ResumeEditor";
 import { EditorSectionKey } from "./editorSections";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -290,13 +291,10 @@ export default function App() {
       <button className="new-button" disabled={interactionLocked} onClick={() => {
         if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
-      <div className="nav-heading">我的简历 <span>{list.length}</span></div>
-      <nav aria-label="我的简历">{list.map(row => <div className="record-nav-row" key={row.id}><button className={`resume-link ${record?.id === row.id ? "active" : ""}`} disabled={interactionLocked}
-        onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${row.id}`))); }}>
-        <span>{row.name || "未命名简历"}</span><small>{row.target_role || "方向待填写"} · v{row.revision}{row.origin === "demo" ? " · 演示" : ""}</small>
-      </button><button className="delete-record" disabled={interactionLocked} aria-label={`删除简历 ${row.name || "未命名简历"}`} onClick={() => void deleteRecord(row)}>删除</button></div>)}</nav>
-      {jobs.length > 0 && <><div className="nav-heading">生成任务</div><nav aria-label="生成任务">{jobs.map(job => <div className="record-nav-row" key={job.id}><button className={`resume-link ${jobId === job.id ? "active" : ""}`} disabled={interactionLocked}
-        onClick={() => showJob(job.id)}><span>{job.target_role}</span><small>{({ queued: "等待执行", running: "正在生成", waiting_input: "等待补充", ready: "已有结果", failed: "可查看或继续", interrupted: "已中断", cancelled: "已取消" } as Record<string, string>)[job.state]}</small></button><button className="delete-record" disabled={interactionLocked} aria-label={`删除生成任务 ${job.target_role}`} onClick={() => void deleteJob(job.id)}>删除</button></div>)}</nav></>}
+      <WorkspaceSidebar resumes={list} jobs={jobs} selectedResumeId={record?.id || null} selectedJobId={jobId}
+        disabled={interactionLocked}
+        onSelectResume={row => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${row.id}`))); }}
+        onDeleteResume={row => void deleteRecord(row)} onSelectJob={job => showJob(job.id)} onDeleteJob={job => void deleteJob(job.id)}/>
       <div className="sidebar-bottom"><button disabled={interactionLocked} onClick={() => setSettings(true)}>⚙ 模型连接</button>
         <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.7 · 分阶段生成与可信交付</small></div></div>
     </aside>

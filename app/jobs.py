@@ -88,7 +88,9 @@ class JobStore:
         with self.store.engine.connect() as connection:
             rows = connection.execute(select(job_rows.c.data).order_by(job_rows.c.id)).scalars().all()
         jobs = sorted((j for data in rows if not (j := json.loads(data)).get("deleted")), key=lambda job: job["created_at"], reverse=True)
-        return [{**{key: job[key] for key in keys}, "target_role": job["input"]["target_role"]} for job in jobs[:50]]
+        return [{**{key: job[key] for key in keys}, "target_role": job["input"]["target_role"],
+                 "resume_id": job.get("adopted_resume_id") or job.get("input", {}).get("review_resume_id")}
+                for job in jobs[:50]]
 
     def mutate(self, job_id, callback):
         with self.store.engine.begin() as connection:

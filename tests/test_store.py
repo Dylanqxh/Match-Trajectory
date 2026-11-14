@@ -100,3 +100,34 @@ def test_unknown_resume_is_not_created_by_save(tmp_path):
     with pytest.raises(NotFound):
         store.save("missing", 1, content())
     assert store.list() == []
+
+
+def test_job_summaries_derive_resume_relationships_without_rewriting_jobs(tmp_path):
+    from types import SimpleNamespace
+
+    from app.jobs import JobStore
+    from app.store import ResumeStore
+
+    store = ResumeStore(tmp_path / "resume.sqlite3")
+    jobs = JobStore(store)
+    resume = store.create(content(), "manual")
+    skill = SimpleNamespace(role="general", version="v1", instructions="", resources=[],
+                            stage_resources={}, stage_instructions={})
+
+    def inputs(request_id, **extra):
+        return {"request_id": request_id, "name": "", "contact": "", "target_role": "后端研发",
+                "source_text": "真实材料", "jd": "", "education": [], "career_stage": "unspecified",
+                "has_career_gap": False, "execution_mode": "langgraph", "allow_questions": False,
+                "send_materials": True, "edit_request": "none", **extra}
+
+    adopted = jobs.create(inputs("adopted-job"), "config", {}, skill, [],
+                          extra={"adopted_resume_id": resume.id})
+    recheck = jobs.create(inputs("recheck-job", review_resume_id=resume.id), "config", {}, skill, [], mode="recheck")
+    unmatched = jobs.create(inputs("unmatched-job"), "config", {}, skill, [])
+
+    summaries = {row["id"]: row for row in jobs.list()}
+    assert summaries[adopted["id"]]["resume_id"] == resume.id
+    assert summaries[recheck["id"]]["resume_id"] == resume.id
+    assert summaries[unmatched["id"]]["resume_id"] is None
+    assert summaries[adopted["id"]]["created_at"]
+    assert summaries[adopted["id"]]["updated_at"]

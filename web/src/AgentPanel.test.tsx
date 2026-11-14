@@ -87,7 +87,8 @@ describe("AgentPanel", () => {
 
   it("binds an adopted generation task to the materialized resume version", () => {
     const target = activeAgentTarget(
-      { id: "job-1", state: "ready", stage: "done", target_role: "后端研发", mode: "generate", adopted_resume_id: "resume-1" },
+      { id: "job-1", state: "ready", stage: "done", target_role: "后端研发", mode: "generate", adopted_resume_id: "resume-1",
+        resume_id: "resume-1", created_at: "2026-11-14T00:00:00Z", updated_at: "2026-11-14T00:00:00Z" },
       null,
       [{ id: "resume-1", revision: 4, origin: "ai", name: "林然", target_role: "后端研发" }],
       false,

@@ -108,11 +108,11 @@
 - Produces: `buildWorkspaceTree(resumes: Summary[], jobs: GenerationSummary[]) -> {resumes: ResumeNode[]; inbox: GenerationSummary[]}`.
 - Produces: `WorkspaceSidebar` callbacks for select/delete resume and select/delete job.
 
-- [ ] Add failing backend tests for adopted, recheck, and unmatched job relationships.
-- [ ] Extend `JobStore.list()` to derive `resume_id` without rewriting stored jobs.
-- [ ] Add failing grouping tests for one resume with multiple jobs, empty resumes, deleted/missing parents, and unmatched legacy jobs.
-- [ ] Implement the pure tree and sidebar component with expandable resume histories and a separate active-task inbox.
-- [ ] Replace the two peer lists in `App` and run focused Pytest/Vitest/typecheck; confirm GREEN.
+- [x] Add failing backend tests for adopted, recheck, and unmatched job relationships.
+- [x] Extend `JobStore.list()` to derive `resume_id` without rewriting stored jobs.
+- [x] Add failing grouping tests for one resume with multiple jobs, empty resumes, deleted/missing parents, and unmatched legacy jobs.
+- [x] Implement the pure tree and sidebar component with nested resume histories and a separate active-task inbox.
+- [x] Replace the two peer lists in `App` and run focused Pytest/Vitest/typecheck; confirm GREEN.
 
 ### Task 5: User-facing Agent execution trace
 

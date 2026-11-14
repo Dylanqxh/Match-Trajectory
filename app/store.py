@@ -169,13 +169,23 @@ class ResumeStore:
                      "name": json.loads(row["content"])["name"], "target_role": json.loads(row["content"])["target_role"]}
                     for row in rows]
 
-    def save(self, resume_id: str, expected_revision: int, content: ResumeContent) -> ResumeRecord:
+    def source_text(self, resume_id: str) -> str:
+        with self.engine.connect() as connection:
+            value = connection.execute(select(resumes.c.source_text).where(resumes.c.id == resume_id)).scalar_one_or_none()
+        if value is None:
+            raise NotFound("简历不存在")
+        return value
+
+    def save(self, resume_id: str, expected_revision: int, content: ResumeContent, *, ai: AIInfo | None = None) -> ResumeRecord:
         with self.engine.begin() as connection:
             current = self._read(connection, resume_id)
-            facts = make_facts(content, current.origin, current.facts)
+            next_ai = ai or current.ai
+            facts = make_facts(content, "ai" if next_ai else current.origin, current.facts)
             changed = current.model_copy(update={"revision": expected_revision + 1, "confirmed_revision": None,
                                                   "content": content, "facts": facts, "updated_at": timestamp()})
-            if current.ai:
+            if ai:
+                changed.ai = ai
+            elif current.ai:
                 changed.ai = current.ai.model_copy(update={"review_status": "unreviewed", "manual_takeover": False, "quality": None,
                                                            "issues": resolve_deleted_issues(current, content, changed.revision)})
             result = connection.execute(update(resumes).where(

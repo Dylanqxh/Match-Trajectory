@@ -200,8 +200,8 @@ class GenerationInput(StrictModel):
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,80}$")
     name: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
-    target_role: str = Field(min_length=1, max_length=80)
-    role_direction: Literal["product", "backend", "other"] | None = None
+    target_role: str = Field(default="", max_length=80)
+    role_direction: Literal["product", "backend", "frontend", "testing", "data-engineering", "algorithm", "data-analysis", "operations", "other"] | None = None
     source_text: str = Field(default="", max_length=20000)
     jd: str = Field(default="", max_length=8000)
     allow_questions: bool = True
@@ -210,6 +210,7 @@ class GenerationInput(StrictModel):
     career_stage: Literal["unspecified", "entry", "experienced", "transition"] = "unspecified"
     has_career_gap: bool = False
     execution_mode: Literal["legacy", "langgraph", "supervisor"] = "langgraph"
+    edit_request: Literal["none", "shorten", "restore_headcount"] = "none"
 
 
 class AnswerInput(StrictModel):

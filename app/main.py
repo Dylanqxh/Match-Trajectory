@@ -3,17 +3,22 @@ import secrets
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app import key_store, providers
+from app import uploads as upload_text
 from app.budget import DEFAULT_POLICY
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
+from app.intake import ParseRequest, parse_material
 from app.jobs import JobStore
 from app.lifecycle import Lifecycle
 from app.model_client import ModelClient, ModelRegistry
@@ -26,6 +31,7 @@ from app.models import (
     SaveResume,
     Section,
 )
+from app.resume_agent import AgentMessageInput, AgentService, AgentTargetInput
 from app.store import Conflict, NotFound, ResumeStore
 from app.workflow import Workflow
 
@@ -38,6 +44,23 @@ class TakeoverRequest(RevisionRequest):
     acknowledged: bool
 
 
+class ProviderSetup(providers.ProviderConfig):
+    remember: bool = False
+
+
+def is_local_page_origin(origin: str) -> bool:
+    parts = urlsplit(origin)
+    return (
+        parts.scheme == "http"
+        and parts.hostname in {"localhost", "127.0.0.1"}
+        and parts.username is None
+        and parts.password is None
+        and parts.path in {"", "/"}
+        and not parts.query
+        and not parts.fragment
+    )
+
+
 def resource_root() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
@@ -46,11 +69,27 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     store = ResumeStore(data_dir / "resumes.sqlite3")
     jobs = JobStore(store)
     registry = ModelRegistry()
-    workflow = Workflow(store, jobs, registry, model_client or ModelClient())
+    client = model_client or ModelClient()
+    workflow = Workflow(store, jobs, registry, client)
     lifecycle = Lifecycle(store, jobs, data_dir)
 
     @asynccontextmanager
     async def lifespan(app):
+        remembered = key_store.load(data_dir)
+        if remembered:
+            try:
+                config = providers.ProviderConfig(provider=remembered["provider"], base_url=remembered["base_url"],
+                                                  model=remembered["model"], api_key=remembered["api_key"])
+                registry.register(config)
+                secret = remembered["api_key"]
+                app.state.provider = {"provider": config.provider, "base_url": config.base_url, "model": config.model,
+                                      "configured": True, "key_mask": "••••" + (secret[-4:] if len(secret) > 8 else ""),
+                                      "json_probe_passed": False, "resume_generation_verified": False, "key_storage": "keyring",
+                                      "message": "已从系统钥匙串恢复连接。"}
+                app.state.provider_key = secret
+                app.state.key_storage = "keyring"
+            except Exception:  # noqa: BLE001 -- a bad saved key must not stop startup or print the secret
+                app.state.key_storage = "memory"
         lifecycle.retry_cleanup()
         await workflow.start()
         try:
@@ -64,7 +103,9 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     app.state.data_dir = data_dir
     app.state.provider = None
     app.state.provider_key = None
+    app.state.key_storage = "memory"
     app.state.workflow = workflow
+    agent = AgentService(workflow)
     session = secrets.token_urlsafe(32)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 
@@ -72,7 +113,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     async def local_session(request: Request, call_next):
         if request.url.path.startswith("/api/"):
             origin = request.headers.get("origin")
-            if origin and origin != str(request.base_url).rstrip("/"):
+            if origin and not is_local_page_origin(origin):
                 return JSONResponse({"detail": "仅接受本地页面的请求"}, status_code=403)
             if request.url.path != "/api/session":
                 cookie = request.cookies.get("mt_session", "")
@@ -173,7 +214,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     from app.exports import IncompleteResume, export_resume
     from app.processes import WorkerFailure
-    from app.rendering import font_path, render_html
+    from app.rendering import font_path, render_html, resume_fit_script
 
     @app.exception_handler(WorkerFailure)
     async def export_error_handler(request, exc):
@@ -199,6 +240,10 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     def preview(body: ResumeContent, demo: bool = False):
         return render_html(body, demo=demo)
 
+    @app.get("/resume-fit.js")
+    def resume_fitter():
+        return Response(resume_fit_script(), media_type="application/javascript")
+
     @app.get("/api/font")
     def resume_font():
         path = font_path()
@@ -206,27 +251,47 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
             return JSONResponse({"detail": "中文字体未配置"}, status_code=404)
         return FileResponse(path, media_type="font/otf")
 
-    from app import providers
-
     @app.exception_handler(providers.ProviderError)
     async def provider_error_handler(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        detail = str(exc) or "模型服务调用失败"
+        secret = getattr(app.state, "provider_key", None)
+        if secret and secret in detail:
+            detail = detail.replace(secret, "••••")
+        return JSONResponse({"detail": detail, "category": getattr(exc, "category", "model_unavailable")}, status_code=422)
 
     @app.get("/api/model-settings")
     def model_settings():
         return {**(app.state.provider or {"configured": False, "resume_generation_verified": False}),
-                "tool_calls_verified": registry.supports_tools(registry.current)}
+                "tool_calls_verified": registry.supports_tools(registry.current),
+                "key_storage": app.state.key_storage}
 
     @app.get("/api/model-presets")
     def model_presets():
         return providers.PRESETS
 
     @app.post("/api/model-settings/test")
-    async def test_model_settings(body: providers.ProviderConfig):
+    async def test_model_settings(body: ProviderSetup):
         result = await providers.probe_provider(body)
         result["config_revision"] = registry.register(body)
-        app.state.provider, app.state.provider_key = result, body.api_key
+        secret = body.api_key.get_secret_value()
+        if body.remember:
+            storage = key_store.save(data_dir, body.provider, body.model, body.base_url, secret)
+            result["message"] += "。已保存到系统钥匙串，可随时清除。" if storage == "keyring" else "。本机没有可用的系统钥匙串，Key 只保留在本次服务内存中，重启后需要重新填写。"
+        else:
+            key_store.clear(data_dir)
+            storage = "memory"
+            result["message"] += "。Key 只保留在本次服务内存中，重启后需要重新填写。"
+        result["key_storage"] = storage
+        app.state.provider, app.state.provider_key, app.state.key_storage = result, secret, storage
         return result
+
+    @app.post("/api/model-settings/forget")
+    def forget_model_key():
+        key_store.clear(data_dir)
+        app.state.key_storage = "memory"
+        if isinstance(app.state.provider, dict):
+            app.state.provider["key_storage"] = "memory"
+        return {"cleared": True, "key_storage": "memory"}
 
     @app.post("/api/model-settings/test-tools")
     async def test_model_tools():
@@ -310,6 +375,31 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         if not body.acknowledged:
             raise ValueError("请明确确认已自行核对当前版本")
         return workflow.takeover(resume_id, body.expected_revision)
+
+    @app.post("/api/intake/parse")
+    def parse_intake(body: ParseRequest):
+        return parse_material(body.text, purpose=body.purpose)
+
+    @app.post("/api/uploads")
+    async def upload_material(file: Annotated[UploadFile, File()]):
+        data = await file.read()
+        return upload_text.extract_upload(file.filename or "", data)
+
+    @app.post("/api/agent/sessions", status_code=201)
+    def create_agent_session(body: AgentTargetInput):
+        return agent.create(body)
+
+    @app.get("/api/agent/sessions/{session_id}")
+    def get_agent_session(session_id: str):
+        return agent.get(session_id)
+
+    @app.post("/api/agent/sessions/{session_id}/messages")
+    async def post_agent_message(session_id: str, body: AgentMessageInput):
+        return await agent.post(session_id, body)
+
+    @app.post("/api/agent/sessions/{session_id}/undo")
+    def undo_agent_edit(session_id: str):
+        return agent.undo(session_id)
 
     @app.post("/api/resumes/{resume_id}/resolve-issue")
     async def resolve_resume_issue(resume_id: str, body: ResolveIssueInput):

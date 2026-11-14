@@ -1,20 +1,20 @@
 """Real, local runtime smoke checks. Contains no application or model calls."""
-from pathlib import Path
-import importlib.metadata as metadata
 import json
 import os
 import subprocess
 import sys
+from importlib import metadata
+from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+import pypdfium2 as pdfium
+import pytesseract
 from docx import Document
 from docx.shared import Pt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-import pypdfium2 as pdfium
-import pytesseract
+from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
+from sqlalchemy import create_engine, text
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = Path(os.environ['MATCH_TRAJECTORY_ENV_ROOT'])
@@ -28,7 +28,7 @@ def check(name, fn):
     try:
         report['checks'][name] = fn()
         print('PASS', name, flush=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- each smoke check must be reported without hiding later checks
         report['checks'][name] = {'error':str(exc)}
         report['failures'].append(name)
         print('FAIL', name, str(exc), flush=True)
@@ -120,7 +120,7 @@ def word():
     office_out.mkdir(exist_ok=True)
     profile=ENV/'office-smoke-profile'
     command=[PATHS['soffice'],'-env:UserInstallation='+profile.as_uri(),'--headless','--convert-to','pdf','--outdir',str(office_out),str(target)]
-    completed=subprocess.run(command,capture_output=True,text=True,timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    completed=subprocess.run(command,check=False,capture_output=True,text=True,timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     assert completed.returncode==0, completed.stdout+completed.stderr
     converted=office_out/'editable.pdf'
     assert converted.exists(), completed.stdout+completed.stderr
@@ -130,7 +130,7 @@ def word():
 
 
 def node():
-    completed=subprocess.run([str(Path(PATHS['node'])/'node.exe'),str(ROOT/'tools/verify-node.mjs')],capture_output=True,text=True,timeout=60)
+    completed=subprocess.run([str(Path(PATHS['node'])/'node.exe'),str(ROOT/'tools/verify-node.mjs')],check=False,capture_output=True,text=True,timeout=60)
     assert completed.returncode==0, completed.stdout+completed.stderr
     return json.loads(completed.stdout.strip())
 

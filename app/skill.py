@@ -7,12 +7,31 @@ from pathlib import Path
 
 from app.generation_models import Draft, Evidence, Issue
 
-STORED_ROLES = ("product", "backend", "algorithm", "data-analysis", "operations", "general")
+STORED_ROLES = ("product", "backend", "frontend", "testing", "data-engineering", "algorithm", "data-analysis", "operations", "general")
 TECHNOLOGIES = ("Java", "Python", "Redis", "MySQL", "PostgreSQL", "Kafka", "Spring", "PyTorch", "TensorFlow",
                 "Kubernetes", "Docker", "SQL", "Spark", "Hadoop", "Excel", "Tableau", "Figma", "Axure", "C++", "C#")
 PROJECT_LABEL = re.compile(r"项目(?:[0-9A-Za-z]+|[\u4e00-\u9fff]{1,8}(?=[：:，,。；;\s]|$))")
 NUMERIC = re.compile(r"\d+(?:[.,]\d+)*(?:\s*(?:%|％|万|亿|年|个月|月|天|小时|人|次|条|倍|ms|秒|个|GB|MB|QPS))?", re.IGNORECASE)
 ATTRIBUTION = ("主导", "精通", "负责人", "独立负责", "从零搭建", "牵头")
+
+
+def infer_role_direction(target_role: str) -> str:
+    """Classify a free-text title only for choosing maintained writing rules."""
+    value = target_role or ""
+    families = (
+        ("product", ("产品",)),
+        ("frontend", ("前端", "Web", "web", "React", "Vue", "小程序", "H5")),
+        ("testing", ("测试", "测开", "QA", "质量保障", "质量工程")),
+        ("backend", ("后端", "Java", "java", "服务端", "Golang", "golang")),
+        ("data-engineering", ("数据开发", "数据工程", "大数据", "数仓", "ETL", "数据平台")),
+        ("algorithm", ("算法", "Agent", "RAG", "NLP", "推荐", "搜索", "视觉")),
+        ("data-analysis", ("数据分析", "商业分析", "BI")),
+        ("operations", ("运营", "增长", "用户增长", "内容")),
+    )
+    for direction, tokens in families:
+        if any(token in value for token in tokens):
+            return direction
+    return "other"
 
 
 @dataclass(frozen=True)
@@ -32,14 +51,12 @@ def load_skill(target_role: str, career_stage="unspecified", has_career_gap=Fals
     directions that new tasks can no longer select.
     """
     del target_role
+    selectable_roles = {role: role for role in STORED_ROLES if role != "general"}
+    selectable_roles["other"] = "general"
     if pinned_role in STORED_ROLES:
         role = pinned_role
-    elif role_direction == "product":
-        role = "product"
-    elif role_direction == "backend":
-        role = "backend"
     else:
-        role = "general"
+        role = selectable_roles.get(role_direction, "general")
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "skills" / "resume-writing"
     base = ["SKILL.md", "references/contract.md", "references/evidence/common.md", f"references/roles/{role}.md", "references/candidates/common.md"]
     candidate = {"entry": "entry", "experienced": "experienced", "transition": "transition"}.get(career_stage)
@@ -48,8 +65,8 @@ def load_skill(target_role: str, career_stage="unspecified", has_career_gap=Fals
     if has_career_gap:
         base.append("references/candidates/returning.md")
     extras = {"plan": ["references/questions.md"], "draft": ["references/editorial.md"],
-              "review": ["references/quality-rubric.md", "references/review-boundaries.md"],
-              "revise": ["references/editorial.md", "references/quality-rubric.md"]}
+              "review": ["references/quality-rubric.md", "references/review-boundaries.md", "references/claim-audit.md"],
+              "revise": ["references/editorial.md", "references/quality-rubric.md", "references/claim-audit.md"]}
     example_path = "examples/writing-boundaries.json"
     examples = json.loads((root / example_path).read_text(encoding="utf-8"))
     selected = [row for row in examples if row["role"] == role]
@@ -154,7 +171,11 @@ def _moved_across_projects(claim, source):
 
 
 def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
-    from app.gates import proficiency_violations, ungrounded_familiarity
+    from app.gates import (
+        proficiency_downgrades,
+        proficiency_violations,
+        ungrounded_familiarity,
+    )
 
     sources = {e.id: e.text for e in evidence}
     issues = []
@@ -191,6 +212,9 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
         overstated = proficiency_violations(claim.text, source)
         if overstated:
             add("attribution", f"熟练度超过原文（{'、'.join(overstated[:4])}）。原文没有写这个程度时，只保留技能名称或原文里的说法。")
+        weakened = proficiency_downgrades(claim.text, source)
+        if weakened:
+            add("attribution", f"熟练度弱于原文（{'、'.join(weakened[:4])}）。事实没有变化时应保留原文措辞，不要把掌握或熟悉改成了解。")
         if "数倍" in claim.text and "数倍" not in source and not re.search(r"\d+(?:\.\d+)?\s*倍", source):
             issues.append(Issue(item_id=claim.id, severity="warning", code="attribution", message="“数倍”这类定性夸大未在引用材料中出现，请改回原文口径。"))
         if "显著提升" in claim.text and "显著提升" not in source:

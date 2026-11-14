@@ -62,7 +62,7 @@ def run_worker(command: list[str], payload: bytes, timeout: float = 60) -> bytes
                 raise WorkerFailure("文档处理超时，内容已保留，请重试") from None
             if process.returncode != 0:
                 messages = {b"FONT_MISSING": "未找到中文字体，请通过项目启动入口运行",
-                            b"PDF_LAYOUT": "PDF 超过两页或正文检查未通过，请精简内容后重试"}
+                            b"PDF_LAYOUT": "PDF 无法在可读范围内排成一页，或正文检查未通过，请精简内容后重试"}
                 raise WorkerFailure(messages.get(error.strip(), "文档处理失败，请检查运行环境后重试"))
             return output
         finally:

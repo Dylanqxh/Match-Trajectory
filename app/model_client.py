@@ -7,7 +7,13 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.budget import DEFAULT_POLICY, budget_for_job
-from app.providers import ProviderConfig, ProviderError
+from app.provider_protocols import (
+    adapt_request,
+    decode_response,
+    request_endpoint,
+    request_headers,
+)
+from app.providers import ProviderConfig, ProviderError, classify_provider_failure
 
 REQUEST_TIMEOUT = DEFAULT_POLICY.request_ms / 1000
 MAX_RESPONSE_BYTES = DEFAULT_POLICY.max_response_bytes
@@ -132,7 +138,7 @@ class ModelClient:
         body = await self._post(config, payload, policy)
         envelope = {}
         try:
-            envelope = json.loads(body)
+            envelope = decode_response(config, body)
             choice = envelope["choices"][0]
             tools = choice["message"]["tool_calls"]
             if choice["finish_reason"] != "tool_calls" or len(tools) != 1:
@@ -173,7 +179,7 @@ class ModelClient:
             payload["thinking"] = {"type": "disabled"}
         body = await self._post(config, payload, policy)
         try:
-            envelope = json.loads(body)
+            envelope = decode_response(config, body)
             choice = envelope["choices"][0]
             reason = choice["finish_reason"]
             if reason != "stop":
@@ -185,35 +191,87 @@ class ModelClient:
         except (ValueError, KeyError, TypeError, IndexError):
             raise ModelOutputError("模型响应封装不完整或不是有效 JSON", diagnostic={"category": "response_envelope", "fields": []}) from None
         try:
-            value = schema.model_validate_json(text)
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ModelOutputError("模型返回的内容不是完整 JSON，未生成简历", diagnostic={
+                "category": "invalid_json", "fields": []}, usage=safe_usage(envelope)) from exc
+        if stage in ("draft", "revise") and isinstance(parsed, dict):
+            from app.draft_normalize import normalize_draft_payload
+
+            evidence = context.get("evidence") or []
+            known = [row.get("id") for row in evidence if isinstance(row, dict) and isinstance(row.get("id"), str)]
+            parsed = normalize_draft_payload(parsed, known)
+        try:
+            value = schema.model_validate(parsed)
         except ValidationError as exc:
             fields = safe_validation_fields(exc, schema)
             category = "invalid_json" if any(item["type"] == "json_invalid" for item in fields) else "schema"
-            locations = "、".join(dict.fromkeys(item["path"] for item in fields))
-            raise ModelOutputError(f"模型输出结构不匹配，需检查字段：{locations}；已记录脱敏诊断", diagnostic={
+            raise ModelOutputError("这次没能把草稿整理成一份完整简历。材料还在，可以再试一次。", diagnostic={
                 "category": category, "fields": fields, "response_chars": len(text)}, usage=safe_usage(envelope)) from None
         return Completion(value, safe_usage(envelope))
 
+    async def propose_edit(self, config: ProviderConfig, context: dict, schema: type[BaseModel]) -> Completion:
+        policy = budget_for_job({"budget_policy": context["_budget_policy"]} if "_budget_policy" in context else {})
+        system = (
+            str(context.get("instructions", ""))
+            + "\n当前阶段：agent_edit"
+            + "\n你是简历编辑 Agent，只能根据 current_content、evidence 和 user_request 提出修改。"
+            + "用户要求只表示编辑意图，不是新的事实证据。不得补充 evidence 中没有的数字、技能、责任、状态或结果。"
+            + "保留未被要求修改的结构和标识；不要输出姓名、联系方式或学校。"
+            + "只返回符合下面 JSON Schema 的 json 对象，不要解释 JSON 之外的内容。\n"
+            + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        )
+        user = json.dumps({key: value for key, value in context.items() if key not in ("instructions", "_budget_policy")}, ensure_ascii=False)
+        if len(user) + len(system) > policy.max_context_chars:
+            raise ProviderError("本次 Agent 上下文过长，请缩短对话或材料后重试；当前简历未改变")
+        payload = {"model": config.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "max_tokens": policy.max_output_tokens, "temperature": 0, "stream": False}
+        if config.provider in ("deepseek", "dashscope"):
+            payload["response_format"] = {"type": "json_object"}
+        if config.provider == "deepseek":
+            payload["seed"] = 0
+            payload["thinking"] = {"type": "disabled"}
+        body = await self._post(config, payload, policy)
+        envelope = {}
+        try:
+            envelope = decode_response(config, body)
+            choice = envelope["choices"][0]
+            if choice["finish_reason"] != "stop":
+                raise ModelOutputError("Agent 输出被截断，当前简历未改变", usage=safe_usage(envelope))
+            text = choice["message"]["content"]
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError
+            value = schema.model_validate_json(text)
+        except ModelOutputError:
+            raise
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError):
+            raise ModelOutputError("Agent 没有返回有效的修改提案，当前简历未改变", usage=safe_usage(envelope)) from None
+        return Completion(value, safe_usage(envelope))
+
     async def _post(self, config, payload, policy=DEFAULT_POLICY):
-        endpoint = config.base_url if config.base_url.endswith("/chat/completions") else config.base_url + "/chat/completions"
+        endpoint = request_endpoint(config)
+        headers = {**request_headers(config), "Accept-Encoding": "identity"}
+        wire_payload = adapt_request(config, payload)
         try:
             async with asyncio.timeout(min(REQUEST_TIMEOUT, policy.request_ms / 1000)), httpx.AsyncClient(
                 timeout=min(REQUEST_TIMEOUT, policy.request_ms / 1000), follow_redirects=False, trust_env=False, transport=self.transport,
-            ) as client, client.stream("POST", endpoint, json=payload, headers={
-                "Authorization": "Bearer " + config.api_key.get_secret_value(), "Accept-Encoding": "identity",
-            }) as response:
+            ) as client, client.stream("POST", endpoint, json=wire_payload, headers=headers) as response:
                 if response.status_code != 200:
-                    messages = {401: "Key 无效，请重新连接模型", 403: "模型账户没有调用权限", 429: "模型额度不足或限流，请稍后继续"}
-                    raise ProviderError(messages.get(response.status_code, "模型服务调用失败，任务已保留，请检查地址或稍后继续"))
+                    from app.providers import _read_error_snippet, _without_secret
+
+                    snippet = await _read_error_snippet(response)
+                    category, message = classify_provider_failure(
+                        response.status_code, snippet, redirect=bool(response.is_redirect), during="generation")
+                    raise ProviderError(_without_secret(message, config), category)
                 if response.headers.get("content-encoding", "identity") != "identity":
-                    raise ProviderError("模型服务返回不支持的压缩响应，已停止读取")
+                    raise ProviderError("模型服务返回不支持的压缩响应，已停止读取", "model_unavailable")
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     if len(body) + len(chunk) > min(MAX_RESPONSE_BYTES, policy.max_response_bytes):
-                        raise ProviderError("模型响应过大，已停止读取，任务材料仍保留")
+                        raise ProviderError("模型响应过大，已停止读取，任务材料仍保留", "model_unavailable")
                     body.extend(chunk)
         except (httpx.TimeoutException, TimeoutError):
-            raise ProviderError("模型调用超时；本次可能已经计费，可稍后明确继续") from None
+            raise ProviderError("模型调用超时；本次可能已经计费，可稍后明确继续", "timeout") from None
         except httpx.HTTPError:
-            raise ProviderError("模型网络连接失败，任务已保留") from None
+            raise ProviderError("模型网络连接失败，任务已保留", "network") from None
         return body

@@ -15,9 +15,15 @@ data/
 *.pem
 id_ed25519*
 .superpowers/
+.sdd/
 evaluation/runs/
 evaluation/authorized-cases.json
 web/dist/
 build/
 dist/
+.secrets/
+eval-samples/_internal/
+/bundles/
+*.zip
+*.7z
 

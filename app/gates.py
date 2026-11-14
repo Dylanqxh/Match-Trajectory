@@ -2,7 +2,7 @@
 import re
 
 from app.generation_models import Issue
-from app.resume_layout import CANONICAL_KINDS, section_blob
+from app.resume_layout import CANONICAL_KINDS, presentation_highlights, section_blob
 from app.skill import TECHNOLOGIES
 
 # Older tasks and hand-edited drafts used these labels with kind "other".
@@ -12,7 +12,7 @@ GENERIC_BLOCK_TITLES = {
     "校园与荣誉", "教育经历", "教育背景",
 }
 _BLOCK_TITLES = {"教育经历", "专业技能", "项目", "项目经历", "工作 / 实习经历", "工作／实习经历", "工作/实习经历", "校园与荣誉", "实习"}
-SKILL_NAMES = ("Spring Boot",) + tuple(sorted(TECHNOLOGIES, key=len, reverse=True))
+SKILL_NAMES = ("Spring Boot", "MySQL Binlog", "OceanBase OMS", "分库分表", "配置对账", "告警治理") + tuple(sorted(TECHNOLOGIES, key=len, reverse=True))
 LEVEL_RANK = {"了解": 1, "熟悉": 2, "掌握": 3, "熟练": 3, "精通": 4}
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -328,7 +328,11 @@ def _skill_hits(text: str) -> list[str]:
 def _stated_level(source: str, skill: str) -> int:
     best = 0
     for match in re.finditer(re.escape(skill), source or "", re.IGNORECASE):
-        window = source[max(0, match.start() - 16):match.end() + 16]
+        left = max(source.rfind(mark, 0, match.start()) for mark in ("，", "。", "；", ";", "\n")) + 1
+        stops = [source.find(mark, match.end()) for mark in ("，", "。", "；", ";", "\n")]
+        stops = [stop for stop in stops if stop >= 0]
+        right = min(stops) if stops else len(source)
+        window = source[left:right]
         for word, rank in LEVEL_RANK.items():
             if word in window:
                 best = max(best, rank)
@@ -349,6 +353,20 @@ def proficiency_violations(claim: str, source: str) -> list[str]:
                     if label not in violations:
                         violations.append(label)
     return violations
+
+
+def proficiency_downgrades(claim: str, source: str) -> list[str]:
+    """Flag an explicit weaker level when the cited source states a stronger one."""
+    downgraded = []
+    for skill in _skill_hits(claim):
+        source_rank = _stated_level(source, skill)
+        claim_rank = _stated_level(claim, skill)
+        if source_rank and claim_rank and claim_rank < source_rank:
+            source_word = next(word for word, rank in LEVEL_RANK.items() if rank == source_rank)
+            label = f"{source_word}{skill}"
+            if label not in downgraded:
+                downgraded.append(label)
+    return downgraded
 
 
 def soften_proficiency(text: str, source: str) -> str:
@@ -433,6 +451,37 @@ def _restore_team_sizes(sections: list[dict], source: str) -> None:
         best["role"] = f"{role}（{label}）" if role else label
 
 
+def _merge_single_research_output(section: dict) -> None:
+    """Keep two descriptions of one paper/model as one resume bullet."""
+    items = section.get("items") or []
+    title = section.get("title") or ""
+    if len(items) != 2 or not (section.get("kind") == "research" or any(word in title for word in ("科研", "学术", "论文"))):
+        return
+    research_words = re.compile(r"论文|发表|期刊|模型|算法|方法|研究|实验")
+    if not all(research_words.search(item.get("text") or "") for item in items):
+        return
+    left_ids, right_ids = set(items[0].get("fact_ids") or []), set(items[1].get("fact_ids") or [])
+    texts = [item.get("text") or "" for item in items]
+    same_output = any(re.search(r"论文|发表|期刊|作者|学生一作", text) for text in texts) and any(
+        re.search(r"模型|算法|方法|机制|实验", text) for text in texts)
+    if not left_ids.intersection(right_ids) and not same_output:
+        return
+    left = (items[0].get("text") or "").rstrip("。；; ")
+    right = (items[1].get("text") or "").rstrip("。；; ")
+    merged = dict(items[0])
+    merged["text"] = f"{left}；{right}。"
+    merged["fact_ids"] = list(dict.fromkeys([*(items[0].get("fact_ids") or []), *(items[1].get("fact_ids") or [])]))
+    merged["highlights"] = [value for value in dict.fromkeys([*(items[0].get("highlights") or []), *(items[1].get("highlights") or [])]) if value in merged["text"]]
+    section["items"] = [merged]
+
+
+def _ensure_presentation_highlights(section: dict) -> None:
+    """Add literal, bounded scan anchors without changing the resume wording."""
+    for item in section.get("items") or []:
+        text = item.get("text") or ""
+        item["highlights"] = presentation_highlights(text, item.get("highlights"))
+
+
 def missing_team_sizes(text: str, source: str) -> list[str]:
     missing = []
     for match in re.finditer(r"项目[^\n：:]{0,8}[：:]\s*([^（\n]+?)（[^）]*?(\d+)\s*人", source or ""):
@@ -478,6 +527,8 @@ def polish_draft(payload: dict, job: dict) -> dict:
         updated_section = dict(section)
         updated_section["items"] = items
         _restore_honor_heading(updated_section, source)
+        _merge_single_research_output(updated_section)
+        _ensure_presentation_highlights(updated_section)
         kept.append(updated_section)
     _restore_team_sizes(kept, source)
     detail, coverage = [], []
@@ -485,8 +536,10 @@ def polish_draft(payload: dict, job: dict) -> dict:
         bucket = detail if is_detail_prompt(prompt, kept) else coverage
         if prompt not in bucket and prompt not in detail:
             bucket.append(prompt)
-    notes = _inject_gap_markers(kept, detail)
-    for note in coverage:
+    # Missing details belong beside the candidate as follow-up notes. Putting
+    # placeholders in the resume body makes a draft look broken and pollutes exports.
+    notes = []
+    for note in [*detail, *coverage]:
         if note not in notes:
             notes.append(note)
     job["coverage_notes"] = notes

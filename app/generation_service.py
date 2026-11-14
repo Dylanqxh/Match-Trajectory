@@ -46,12 +46,13 @@ class GenerationService:
         pass
 
     def submit(self, inputs: GenerationInput):
+        from app.intake import complete_intake
+
+        inputs = complete_intake(inputs)
         if inputs.source_text and inputs.execution_mode == "supervisor" and not self.registry.supports_tools(self.registry.current):
             raise ValueError("请先在模型连接中测试工具调用能力，再启用智能修正策略")
         if inputs.source_text and not inputs.send_materials:
             raise ValueError("请先确认将材料发送给所选模型服务")
-        if inputs.source_text and (not inputs.name or not inputs.contact):
-            raise ValueError("请先填写姓名、联系方式和目标岗位；也可以使用化名及求职专用邮箱")
         config = self.registry.get(self.registry.current) if inputs.source_text else None
         skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap, inputs.role_direction)
         extra = None if inputs.source_text else {"state": "ready", "framework": True,
@@ -129,16 +130,15 @@ class GenerationService:
         if job["state"] not in ("failed", "interrupted"):
             return {"allowed": False, "reason": "任务当前无需继续"}
         if job["calls"] >= policy.max_calls:
-            return {"allowed": False, "reason": f"该任务已使用 {policy.max_calls} 次模型调用，材料与候选保留；请新建任务"}
+            return {"allowed": False, "reason": "这次已经问过模型很多次，材料还在。请改一改材料后再生成。"}
         if job["elapsed_ms"] >= policy.total_ms:
-            return {"allowed": False, "reason": f"该任务累计执行达到 {policy.total_ms // 1000} 秒，材料与候选保留；请新建任务"}
+            return {"allowed": False, "reason": "这次花费的时间已经比较长，材料还在。请改一改材料后再生成。"}
         if job["stage"] in ("draft", "revise") and (job["calls"] >= policy.max_calls - 1 or job["elapsed_ms"] >= policy.total_ms - policy.review_reserve_ms):
-            return {"allowed": False, "reason": "剩余预算不足以生成并审阅新正文；已有候选保留，请新建任务或手工核对"}
+            return {"allowed": False, "reason": "剩下的次数不够再生成并核对一整版。已有内容还在，可以手工修改，或重新开始。"}
         key = f"{job['stage']}:{job['revisions']}"
         if job.get("invalid_outputs", {}).get(key, 0) >= policy.max_invalid_outputs and job.get("output_contract_version", "legacy") == OUTPUT_CONTRACT_VERSION:
-            return {"allowed": False, "reason": f"当前阶段连续{policy.max_invalid_outputs}次未通过输出结构校验，已停止重复调用（总调用 {job['calls']}/{policy.max_calls} 次）。请查看诊断；新建任务前先确认问题已处理。"}
-        upgraded = job.get("output_contract_version", "legacy") != OUTPUT_CONTRACT_VERSION
-        return {"allowed": True, "reason": "输出校验已更新，可从失败阶段继续，已用次数和耗时不清零" if upgraded else "可从失败阶段继续，已用预算保留"}
+            return {"allowed": False, "reason": "连续两次没能整理成可用的简历，已先停下来。材料还在，可以改一改后再生成。"}
+        return {"allowed": True, "reason": "可以接着上次继续，已完成的部分会保留。"}
 
     def adopt(self, job_id):
         result = []
@@ -147,28 +147,31 @@ class GenerationService:
             if (job["mode"] != "generate" or job["state"] not in ("ready", "failed", "interrupted")
                     or (not job["draft"] and not job["framework"])):
                 raise Conflict("任务仍在执行、已取消或没有候选，请等待或先处理错误")
-            if job["adopted_resume_id"]:
-                result.append(self.store._read(connection, job["adopted_resume_id"]))
-                return
-            inputs = job["input"]
-            draft = Draft.model_validate(job["draft"]) if job["draft"] else None
-            fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
-            from app.gates import header_contact
-
-            contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
-            content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
-                name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
-            status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
-                i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
-            info = AIInfo(job_id=job_id, review_job_id=job_id, review_status=status, content_hash=resume_hash(content),
-                          skill_version=job["skill"]["version"], issues=job["issues"], quality=job.get("review", {}).get("quality") if job.get("review") else None,
-                          source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
-            record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
-            job["adopted_resume_id"] = record.id
-            result.append(record)
+            result.append(self._materialize(job, connection))
 
         self.jobs.mutate(job_id, apply)
         return result[0]
+
+    def _materialize(self, job, connection):
+        """Create the editable resume once; safe to call from completion and the legacy endpoint."""
+        if job["adopted_resume_id"]:
+            return self.store._read(connection, job["adopted_resume_id"])
+        inputs = job["input"]
+        draft = Draft.model_validate(job["draft"]) if job["draft"] else None
+        fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
+        from app.gates import header_contact
+
+        contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
+        content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
+            name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
+        status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
+            i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
+        info = AIInfo(job_id=job["id"], review_job_id=job["id"], review_status=status, content_hash=resume_hash(content),
+                      skill_version=job["skill"]["version"], issues=job["issues"], quality=job.get("review", {}).get("quality") if job.get("review") else None,
+                      source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
+        record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
+        job["adopted_resume_id"] = record.id
+        return record
 
     def recheck(self, resume_id, revision, request_id):
         record = self.store.get(resume_id)

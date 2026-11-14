@@ -5,7 +5,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from app.models import ExportRequest, ResumeRecord, resume_hash
+from app.models import ExportRequest, ResumeRecord
 from app.processes import run_worker
 from app.store import Conflict, ResumeStore
 
@@ -21,22 +21,12 @@ def render_in_worker(payload: dict) -> bytes:
 
 def check_export(record: ResumeRecord, request: ExportRequest):
     if record.revision != request.expected_revision:
-        raise Conflict("内容版本已变化，请重新核对并导出")
-    if not request.draft:
-        if record.origin == "ai":
-            info = record.ai
-            if (not info or info.content_hash != resume_hash(record.content)
-                    or info.has_blockers()
-                    or (info.review_status != "passed" and not info.manual_takeover)):
-                raise Conflict("AI 内容需要当前版本审阅通过，或在无已知阻断时明确自行核对接管；现在可以导出草稿")
-        if record.confirmed_revision != record.revision:
-            raise Conflict("请先核对并确认当前版本")
-        if not record.content.name or not record.content.contact or not any(s.items for s in record.content.sections):
-            raise IncompleteResume("请补充姓名、联系方式和至少一段真实内容；当前可先导出草稿")
-        from app.gates import gaps_need_resolution
-
-        if gaps_need_resolution(record.content, bool(record.ai and record.ai.manual_takeover)):
-            raise Conflict("正文还有待补充或待确认标记。请补全或删掉后再正式导出；也可以先导出草稿，或在没有其他阻断时接管。")
+        raise Conflict("内容版本已变化，请重新保存后导出")
+    content = record.content
+    has_content = bool(content.name or content.contact or content.summary or content.education
+                       or any(section.items for section in content.sections))
+    if not has_content:
+        raise IncompleteResume("当前简历还是空白内容，请先填写或生成简历再导出")
 
 
 def export_resume(store: ResumeStore, data_dir: Path, resume_id: str, request: ExportRequest) -> Path:
@@ -47,7 +37,7 @@ def export_resume(store: ResumeStore, data_dir: Path, resume_id: str, request: E
     exports = data_dir / "exports"
     exports.mkdir(parents=True, exist_ok=True)
     artifact_id = uuid.uuid4().hex
-    name = f"resume-{resume_id[:8]}-r{snapshot.revision}-{'draft' if request.draft else 'confirmed'}-{artifact_id}.{request.format}"
+    name = f"resume-{resume_id[:8]}-r{snapshot.revision}-{'draft' if request.draft else 'current'}-{artifact_id}.{request.format}"
     path = exports / name
     temporary = exports / (uuid.uuid4().hex + ".tmp")
     temporary.write_bytes(data)

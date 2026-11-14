@@ -17,6 +17,13 @@ def test_private_data_requires_local_session_and_rejects_cross_origin(tmp_path):
         assert client.get("/api/resumes").json() == []
 
 
+def test_local_development_frontend_origin_may_use_a_different_port(tmp_path):
+    with local_client(tmp_path) as client:
+        response = client.get("/api/session", headers={"origin": "http://127.0.0.1:5174"})
+
+        assert response.status_code == 200
+
+
 def test_create_edit_reload_and_conflict_preserve_user_text(tmp_path):
     with local_client(tmp_path) as client:
         client.get("/api/session")

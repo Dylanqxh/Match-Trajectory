@@ -1,10 +1,13 @@
 import { Section } from "./api";
 
-export function ExperienceFields({ sections, onChange }: { sections: Section[]; onChange: (rows: Section[]) => void }) {
+export function ExperienceFields({ sections, onChange, visibleKinds, defaultKind = "project", defaultTitle = "新增经历" }: {
+  sections: Section[]; onChange: (rows: Section[]) => void; visibleKinds?: string[]; defaultKind?: string; defaultTitle?: string;
+}) {
   function update(id: string, change: Partial<Section>) {
     onChange(sections.map(s => s.id === id ? { ...s, ...change } : s));
   }
-  return <>{sections.map(section => <div className="section-card" key={section.id}>
+  const visible = visibleKinds ? sections.filter(section => visibleKinds.includes(section.kind || "other")) : sections;
+  return <>{visible.map(section => <div className="section-card" key={section.id}>
     <div className="section-heading"><input aria-label="板块名称" value={section.title} maxLength={60} onChange={e => update(section.id, { title: e.target.value })}/>
       <button className="text-button" onClick={() => onChange(sections.filter(s => s.id !== section.id))} aria-label={`删除${section.title}板块`}>删除板块</button></div>
     <div className="two-fields"><label>经历类别<select aria-label={`${section.title}类别`} value={section.kind || "other"} onChange={e => update(section.id, { kind: e.target.value })}>
@@ -21,5 +24,6 @@ export function ExperienceFields({ sections, onChange }: { sections: Section[]; 
       <label className="fine">重点短语（可选）<input aria-label={`${section.title}第${index + 1}条重点`} value={(item.highlights || []).join("；")} placeholder="最多2处，用分号分隔；须是正文原词" onChange={e => update(section.id, { items: section.items.map(i => i.id === item.id ? { ...i, highlights: e.target.value.split(/[；;]/).map(s => s.trim()).filter(Boolean) } : i) })}/></label>
     </div>)}
     <button className="text-button" disabled={section.items.length >= 30} onClick={() => update(section.id, { items: [...section.items, { id: crypto.randomUUID(), text: "", highlights: [] }] })}>＋ 添加一条</button>
-  </div>)}<button className="secondary full" disabled={sections.length >= 12} onClick={() => onChange([...sections, { id: crypto.randomUUID(), title: "新增经历", kind: "project", items: [] }])}>＋ 添加板块</button></>;
+  </div>)}{visible.length === 0 && <p className="editor-empty-group">这个板块还没有内容，可以从一段真实经历开始。</p>}
+    <button className="secondary full" disabled={sections.length >= 12} onClick={() => onChange([...sections, { id: crypto.randomUUID(), title: defaultTitle, kind: defaultKind, items: [] }])}>＋ 添加板块</button></>;
 }

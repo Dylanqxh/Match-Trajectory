@@ -4,12 +4,13 @@ import { ModelSettings } from "./ModelSettings";
 import { GenerationPanel } from "./GenerationPanel";
 import { ManualReview } from "./ManualReview";
 import { EducationFields } from "./EducationFields";
-import { ExperienceFields } from "./ExperienceFields";
 import { QualityReport } from "./QualityReport";
 import { AgentPanel } from "./AgentPanel";
 import { MaterialIntake } from "./MaterialIntake";
 import { RoleDirectionPicker } from "./RoleDirectionPicker";
 import { RoleDirection } from "./roleDirections";
+import { ResumeEditor } from "./ResumeEditor";
+import { EditorSectionKey } from "./editorSections";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -63,6 +64,7 @@ export default function App() {
   const [resolution, setResolution] = useState<{ record: Resume; issueIndex: number } | null>(null);
   const [history, setHistory] = useState<Resume[] | null>(null);
   const [preview, setPreview] = useState("");
+  const [editorSection, setEditorSection] = useState<EditorSectionKey>("basics");
   const [scale, setScale] = useState(0.8);
   const previewBox = useRef<HTMLDivElement>(null);
   const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd, careerStage, careerGap });
@@ -360,14 +362,8 @@ export default function App() {
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
         </div>
         <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
-          <fieldset disabled={interactionLocked}><div className="two-fields"><label>姓名<input value={content.name} maxLength={80} onChange={e => edit({ ...content, name: e.target.value })}/></label>
-          <label>目标岗位<input value={content.target_role} maxLength={80} onChange={e => edit({ ...content, target_role: e.target.value })}/></label></div>
-          <label>联系方式<input value={content.contact} maxLength={300} onChange={e => edit({ ...content, contact: e.target.value })}/></label>
-          <label>个人简介（可留空）<textarea rows={3} value={content.summary} maxLength={2000} onChange={e => edit({ ...content, summary: e.target.value })}/></label>
-          <EducationFields rows={content.education || []} onChange={education => edit({ ...content, education })}/>
-          {!content.education?.length && <p className="notice">尚未填写固定教育信息；如正文已有教育段落，请确认后移入此处，避免重复。</p>}
-          <ExperienceFields sections={content.sections} onChange={sections => edit({ ...content, sections })}/>
-          </fieldset>
+          <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
+            onActiveSectionChange={setEditorSection} onChange={edit}/>
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
         </section>

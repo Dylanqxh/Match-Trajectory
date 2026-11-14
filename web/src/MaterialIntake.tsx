@@ -20,7 +20,7 @@ export function MaterialIntake({ busy, onResume, onJd }: {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await request("/api/chat/uploads", { method: "POST", body });
+      const response = await request("/api/uploads", { method: "POST", body });
       const uploaded = await response.json() as UploadPreview;
       setPreview(uploaded);
       setDraft(uploaded.text);

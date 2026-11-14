@@ -64,6 +64,22 @@ def configure_bundled_resources():
         root = Path(sys._MEIPASS)
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "runtime-browsers")
         os.environ["MATCH_TRAJECTORY_FONT_PATH"] = str(root / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf")
+        return
+    project_root = Path(__file__).resolve().parent.parent
+    runtimes = project_root.parent / ".dev-environment" / "runtimes"
+    browser_path = runtimes / "playwright"
+    font = runtimes / "fonts" / "NotoSansCJKsc-Regular.otf"
+    if browser_path.is_dir():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browser_path))
+    if font.is_file():
+        os.environ.setdefault("MATCH_TRAJECTORY_FONT_PATH", str(font))
+
+
+def configure_runtime_temp(directory: Path):
+    runtime_temp = directory / "runtime-temp"
+    runtime_temp.mkdir(parents=True, exist_ok=True)
+    os.environ["TEMP"] = str(runtime_temp)
+    os.environ["TMP"] = str(runtime_temp)
 
 
 def main():
@@ -81,6 +97,7 @@ def main():
     args = parser.parse_args()
     root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
     directory = (args.data_dir or root / "data").resolve()
+    configure_runtime_temp(directory)
     try:
         with workspace_lock(directory), bind_local_socket(args.port) as listener:
             import uvicorn

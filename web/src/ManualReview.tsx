@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, GenerationJob, Resume } from "./api";
+import { manualReviewError } from "./exportFlow";
 
 export function ManualReview({ record, issueIndex, onClose, onSaved, onEdit, onDraft }: {
   record: Resume; issueIndex: number; onClose: () => void; onSaved: (row: Resume) => void;
@@ -28,6 +29,8 @@ export function ManualReview({ record, issueIndex, onClose, onSaved, onEdit, onD
   ]), ...(record.content.education || []).map(e => ({ id: e.id, text: [e.school, e.degree, e.major, e.start_date, e.end_date].filter(Boolean).join(" · ") })), { id: "__summary", text: record.content.summary }];
   const currentText = issue.item_id === "document" ? "本次问题针对整体内容，请核对相关原文。" : texts.find(item => item.id === issue.item_id)?.text;
   async function save() {
+    const validation = manualReviewError(selected, explanation, acknowledged);
+    if (validation) { setError(validation); return; }
     setBusy(true); setError("");
     try {
       const row = await api<Resume>(`/api/resumes/${record.id}/resolve-issue`, {
@@ -51,7 +54,8 @@ export function ManualReview({ record, issueIndex, onClose, onSaved, onEdit, onD
         )}/><span><strong>材料 {item.id}</strong><span>{item.text}</span></span></label>)}</div>
       <label>核对说明<textarea aria-label="核对说明" rows={3} minLength={10} maxLength={500} value={explanation} onChange={e => setExplanation(e.target.value)} placeholder="例如：原文说明本人负责该模块，候选保留了这个范围，没有写成独立负责整个项目。"/></label>
       <label className="checkbox-label"><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)}/>我已核对所选原文支持当前表述</label>
-      <button className="primary" disabled={busy || !acknowledged || selected.length === 0 || explanation.trim().length < 10} onClick={() => void save()}>保存人工核对结果</button>
+      <button className="primary" disabled={busy || !loaded} onClick={() => void save()}>保存人工核对结果</button>
+      <p className="fine">保存需要：勾选原文、填写至少 10 个字的核对说明，并勾选确认。缺少内容时会明确提示，不会再显示为无法点击。</p>
     </fieldset>
     <div className="button-row"><button className="secondary" disabled={busy} onClick={() => onEdit(issue.item_id)}>内容不对，返回编辑</button>
       <button className="text-button" disabled={busy} onClick={onDraft}>不确定，先下载 Word 草稿</button></div>

@@ -12,6 +12,10 @@ def config():
     return ProviderConfig(provider="deepseek", model="deepseek-flash", api_key="never-print-this-secret")
 
 
+def anthropic_config():
+    return ProviderConfig(provider="anthropic", model="claude-sonnet-5", api_key="never-print-this-secret")
+
+
 def response(content='{"verdict":"pass","issues":[]}', reason="stop"):
     return {"choices": [{"finish_reason": reason, "message": {"content": content}}], "usage": {"total_tokens": 23}}
 
@@ -32,6 +36,49 @@ def test_deepseek_structured_request_and_usage():
     completion = asyncio.run(client.complete(config(), "review", {"instructions": "只核对原文", "candidate": {}}, Review))
     assert completion.value.verdict == "pass"
     assert completion.usage["total_tokens"] == 23
+
+
+def test_anthropic_native_text_response_is_normalized_for_structured_generation():
+    from app.model_client import ModelClient
+
+    def handler(request):
+        assert request.url.path == "/v1/messages"
+        assert request.headers["x-api-key"] == "never-print-this-secret"
+        body = json.loads(request.content)
+        assert body["system"]
+        assert all(message["role"] != "system" for message in body["messages"])
+        assert "temperature" not in body
+        return httpx.Response(200, json={
+            "content": [{"type": "text", "text": '{"verdict":"pass","issues":[]}'}],
+            "stop_reason": "end_turn", "usage": {"input_tokens": 17, "output_tokens": 6},
+        })
+
+    completion = asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).complete(
+        anthropic_config(), "review", {"instructions": "只核对原文", "candidate": {}}, Review))
+
+    assert completion.value.verdict == "pass"
+    assert completion.usage == {"prompt_tokens": 17, "completion_tokens": 6, "total_tokens": 23}
+
+
+def test_anthropic_tool_use_is_normalized_for_supervisor_delegate():
+    from app.model_client import ModelClient
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["tools"][0]["name"] == "delegate_to_writer"
+        assert "input_schema" in body["tools"][0]
+        assert body["tool_choice"] == {"type": "tool", "name": "delegate_to_writer"}
+        return httpx.Response(200, json={
+            "content": [{"type": "tool_use", "id": "tool-1", "name": "delegate_to_writer",
+                         "input": {"action": "revise", "issue_indices": [0], "rationale": "修正已有问题"}}],
+            "stop_reason": "tool_use", "usage": {"input_tokens": 20, "output_tokens": 8},
+        })
+
+    completion = asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).delegate(
+        anthropic_config(), {"issues": [{"index": 0}]}))
+
+    assert completion.value.action == "revise"
+    assert completion.value.issue_indices == [0]
 
 
 @pytest.mark.parametrize(("content", "reason"), [("  ", "stop"), ('{"verdict":', "length"),

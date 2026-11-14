@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -16,7 +16,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app import key_store, providers
 from app import uploads as upload_text
 from app.budget import DEFAULT_POLICY
-from app.chat import ChatMessageInput, ChatService
 from app.demo import demo_content
 from app.generation_models import AnswerInput, GenerationInput, ResolveIssueInput
 from app.intake import ParseRequest, parse_material
@@ -106,7 +105,6 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     app.state.provider_key = None
     app.state.key_storage = "memory"
     app.state.workflow = workflow
-    chat = ChatService(store.engine, workflow)
     agent = AgentService(workflow)
     session = secrets.token_urlsafe(32)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
@@ -216,7 +214,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
 
     from app.exports import IncompleteResume, export_resume
     from app.processes import WorkerFailure
-    from app.rendering import font_path, render_html
+    from app.rendering import font_path, render_html, resume_fit_script
 
     @app.exception_handler(WorkerFailure)
     async def export_error_handler(request, exc):
@@ -241,6 +239,10 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     @app.post("/api/preview", response_class=HTMLResponse)
     def preview(body: ResumeContent, demo: bool = False):
         return render_html(body, demo=demo)
+
+    @app.get("/resume-fit.js")
+    def resume_fitter():
+        return Response(resume_fit_script(), media_type="application/javascript")
 
     @app.get("/api/font")
     def resume_font():
@@ -374,26 +376,14 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
             raise ValueError("请明确确认已自行核对当前版本")
         return workflow.takeover(resume_id, body.expected_revision)
 
-    @app.post("/api/chat/sessions", status_code=201)
-    def create_chat():
-        return chat.create()
-
-    @app.get("/api/chat/sessions/{session_id}")
-    def get_chat(session_id: str):
-        return chat.get(session_id)
-
-    @app.post("/api/chat/sessions/{session_id}/messages")
-    async def post_chat(session_id: str, body: ChatMessageInput):
-        return await chat.post(session_id, body)
-
     @app.post("/api/intake/parse")
     def parse_intake(body: ParseRequest):
         return parse_material(body.text, purpose=body.purpose)
 
-    @app.post("/api/chat/uploads")
+    @app.post("/api/uploads")
     async def upload_material(file: Annotated[UploadFile, File()]):
         data = await file.read()
-        return chat.save_upload(upload_text.extract_upload(file.filename or "", data))
+        return upload_text.extract_upload(file.filename or "", data)
 
     @app.post("/api/agent/sessions", status_code=201)
     def create_agent_session(body: AgentTargetInput):
@@ -407,13 +397,9 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
     async def post_agent_message(session_id: str, body: AgentMessageInput):
         return await agent.post(session_id, body)
 
-    @app.post("/api/agent/sessions/{session_id}/proposals/{proposal_id}/apply")
-    def apply_agent_proposal(session_id: str, proposal_id: str):
-        return agent.apply(session_id, proposal_id)
-
-    @app.post("/api/agent/sessions/{session_id}/proposals/{proposal_id}/discard")
-    def discard_agent_proposal(session_id: str, proposal_id: str):
-        return agent.discard(session_id, proposal_id)
+    @app.post("/api/agent/sessions/{session_id}/undo")
+    def undo_agent_edit(session_id: str):
+        return agent.undo(session_id)
 
     @app.post("/api/resumes/{resume_id}/resolve-issue")
     async def resolve_resume_issue(resume_id: str, body: ResolveIssueInput):

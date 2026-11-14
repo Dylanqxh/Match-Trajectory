@@ -4,9 +4,12 @@ import pytest
 @pytest.mark.parametrize(("direction", "expected"), [
     ("product", "product"),
     ("backend", "backend"),
+    ("data-engineering", "data-engineering"),
     ("algorithm", "algorithm"),
     ("data-analysis", "data-analysis"),
     ("operations", "operations"),
+    ("frontend", "frontend"),
+    ("testing", "testing"),
     ("other", "general"),
     (None, "general"),
 ])

@@ -160,3 +160,26 @@ def test_adjacent_projects_share_one_category_heading():
     assert render_html(content).count("<h2>项目</h2>") == 1
     assert "<h2>工作 / 实习经历</h2>" not in render_html(content)
     assert sum(p.text == "项目" for p in Document(BytesIO(render_docx(content, False, False))).paragraphs) == 1
+
+
+def test_heading_does_not_repeat_organization_and_role_already_in_title():
+    from app.models import Section
+    from app.resume_layout import section_text
+
+    row = Section(id="w1", kind="work", title="字节跳动 · 数据开发工程师",
+                  organization="字节跳动", role="数据开发工程师", items=[])
+    assert section_text(row) == "字节跳动 · 数据开发工程师"
+
+
+def test_long_resume_uses_dense_export_layout_without_changing_content():
+    from app.models import ResumeContent
+    from app.rendering import render_html
+
+    data = structured()
+    data["sections"][0]["items"] = [
+        {"id": f"i{index}", "text": "完成数据链路校验、配置对账、告警治理与上线交付。" * 4}
+        for index in range(1, 21)
+    ]
+    html = render_html(ResumeContent.model_validate(data))
+    assert '<main class="sheet dense">' in html
+    assert html.count("完成数据链路校验") == 80

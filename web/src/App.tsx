@@ -252,6 +252,14 @@ export default function App() {
   function jobUpdated(job: GenerationJob) {
     if (deletionInFlight.current) return;
     if (["ready", "failed", "interrupted", "cancelled", "waiting_input"].includes(job.state)) void refreshJobs().catch(() => {});
+    if (job.mode === "generate" && job.state === "ready" && job.adopted_resume_id && selectedJobId.current === job.id) {
+      void api<Resume>(`/api/resumes/${job.adopted_resume_id}`).then(row => {
+        if (!deletionInFlight.current && selectedJobId.current === job.id) {
+          adopt(row); showJob(null); void refreshList(); void refreshJobs();
+          setStatus("简历已生成并自动进入编辑器，请直接修改或导出");
+        }
+      }).catch(error => setError((error as Error).message));
+    }
     if (job.mode === "recheck" && job.state === "ready" && record && !dirty) {
       void api<Resume>(`/api/resumes/${record.id}`).then(row => {
         if (!deletionInFlight.current && selectedRecordId.current === row.id) { setRecord(row); setStatus("当前版本审阅已完成，请查看结果"); }
@@ -260,8 +268,7 @@ export default function App() {
   }
   async function download(format: "pdf" | "docx", draft = false) {
     await action(async () => {
-      let row = await save();
-      if (!draft) row = await api<Resume>(`/api/resumes/${row.id}/confirm`, { expected_revision: row.revision });
+      const row = await save();
       setRecord(row);
       const response = await request(`/api/resumes/${row.id}/exports`, {
         method: "POST", body: JSON.stringify({ format, expected_revision: row.revision, draft }),
@@ -365,8 +372,8 @@ export default function App() {
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
         </section>
         <section className="preview-panel"><div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
-          <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
-          <div className="export-panel"><strong>确认当前内容后导出</strong><p>点击即表示你已核对当前版本；有修改时会先保存。</p>
+          <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin allow-scripts" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
+          <div className="export-panel"><strong>下载当前版本</strong><p>点击后会先保存左侧修改，再直接生成文件；审阅提示不会阻止下载。</p>
             {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</p>
               <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
               {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
@@ -374,8 +381,7 @@ export default function App() {
                 {unresolvedBlocking(issue) && <button className="text-button" disabled={interactionLocked} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}
               <button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
               <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>自行核对并接管</button></div>}
-            <div className="button-row"><button className="primary" disabled={interactionLocked || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(unresolvedBlocking)))} onClick={() => void download("pdf")}>确认并导出 PDF</button><button className="secondary" disabled={interactionLocked || Boolean(record.ai && (dirty || (!record.ai.manual_takeover && record.ai.review_status !== "passed") || record.ai.issues.some(unresolvedBlocking)))} onClick={() => void download("docx")}>确认并导出 Word</button></div>
-            <button className="text-button" disabled={interactionLocked} onClick={() => void download("docx", true)}>先下载 Word 草稿</button>
+            <div className="button-row"><button className="primary" disabled={interactionLocked} onClick={() => void download("pdf")}>下载 PDF</button><button className="secondary" disabled={interactionLocked} onClick={() => void download("docx")}>下载 Word</button></div>
             <p className="fine">Word 中的字体与分页可能不同；PDF 更适合固定排版。</p>
           </div>
         </section></div>
@@ -383,7 +389,7 @@ export default function App() {
       </div>
     </main>
     <AgentPanel target={agentTarget} modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onApplied={row => {
-      adopt(row); showJob(null); void refreshList(); void refreshJobs(); setStatus(`Agent 修改已应用为版本 ${row.revision}，请重新审阅`);
+      adopt(row); showJob(null); void refreshList(); void refreshJobs(); setStatus(`Agent 修改已自动保存为版本 ${row.revision}，需要时可在对话中撤销`);
     }}/>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
     {resolution && <ManualReview key={`${resolution.record.id}-${resolution.issueIndex}-${resolution.record.revision}`} record={resolution.record} issueIndex={resolution.issueIndex} onClose={() => setResolution(null)} onEdit={editIssue} onDraft={() => { setResolution(null); void download("docx", true); }} onSaved={row => {

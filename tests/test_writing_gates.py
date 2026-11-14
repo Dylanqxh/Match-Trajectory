@@ -174,12 +174,12 @@ def test_project_item_cannot_use_another_periods_dates():
     assert any(issue.code == "conflict" and "时间不一致" in issue.message for issue in issues)
 
 
-def test_ad_hoc_section_is_blocking_and_gap_markers_hold_formal_export(tmp_path):
+def test_ad_hoc_section_is_blocking_for_generation_but_not_current_version_download(tmp_path):
     from app.exports import check_export
     from app.gates import blocking_gates
     from app.generation_models import Draft
     from app.models import ExportRequest, Item, ResumeContent, Section
-    from app.store import Conflict, ResumeStore
+    from app.store import ResumeStore
 
     summary = Draft.model_validate({"sections": [{"id": "s", "title": "个人总结", "kind": "other", "items": [
         {"id": "i", "text": "热爱技术。", "fact_ids": ["e1"]}]}]})
@@ -190,8 +190,7 @@ def test_ad_hoc_section_is_blocking_and_gap_markers_hold_formal_export(tmp_path)
         Section(id="p", title="知南教育", kind="work", items=[Item(id="i", text="实习【待确认：一个月还是两个月】")])])
     record = store.create(content, "manual", "实习过一个月")
     store.confirm(record.id, 1)
-    with pytest.raises(Conflict, match="待确认"):
-        check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
+    check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
     check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1, draft=True))
 
 
@@ -251,7 +250,7 @@ def _sample_copy():
     ("", ""),
     ("campus-be-001@example.invalid", "江城大学"),
 ])
-def test_sample1_strips_negatives_marks_skipped_gaps_and_drops_docker_either_way(contact, school):
+def test_sample1_strips_negatives_keeps_skipped_gaps_beside_body_and_drops_docker_either_way(contact, school):
     from app.generation_models import Draft
     from app.phases import prepare_draft
     from app.resume_layout import education_text, period_text
@@ -272,9 +271,9 @@ def test_sample1_strips_negatives_marks_skipped_gaps_and_drops_docker_either_way
     body = "\n".join(item.text for section in polished.sections for item in section.items)
     assert "未正式推广" not in body and "试运行结束后" not in body and "其他组员" not in body
     assert "社团组织 2 周试运行，覆盖图书馆一层自习区" in body
-    assert "【待补充：使用人数】" in body
-    assert "【待补充：个人赛还是团队赛】" in body
-    assert "【待补充：Redis" not in body
+    assert "【待补充" not in body
+    assert any("使用" in note for note in job["coverage_notes"])
+    assert any("个人赛" in note or "团队赛" in note for note in job["coverage_notes"])
     assert any("Redis" in note for note in job["coverage_notes"])
     assert "Docker" not in body and "Java" in body
     from app.resume_layout import section_text
@@ -308,7 +307,7 @@ def test_ungrounded_skill_claim_is_blocked_with_or_without_contact():
         assert contact in ("", "campus-be-001@example.invalid")
 
 
-def test_jd_gaps_stay_out_of_the_body_and_markers_sit_on_their_sentence():
+def test_jd_gaps_and_followups_stay_out_of_the_body():
     from app.generation_models import Draft
     from app.phases import prepare_draft
 
@@ -327,12 +326,72 @@ def test_jd_gaps_stay_out_of_the_body_and_markers_sit_on_their_sentence():
     polished = prepare_draft(job, draft)
     book = next(section for section in polished.sections if section.id == "book").items[0].text
     honor = next(section for section in polished.sections if section.kind == "campus").items[0].text
-    assert book.index("单元测试") < book.index("【待补充：单元测试覆盖范围】") < book.index("JMeter")
+    assert book.index("单元测试") < book.index("JMeter")
     assert "【待补充" not in honor
     assert all("JD" not in item.text for section in polished.sections for item in section.items)
-    assert sum(item.text.count("【待补充") for section in polished.sections for item in section.items) <= 4
+    assert all("【待补充" not in item.text for section in polished.sections for item in section.items)
+    assert any("单元测试" in note for note in job["coverage_notes"])
     assert any("故障排查" in note or "技术博客" in note for note in job["coverage_notes"])
-    assert all(item.text.count("【待补充") <= 1 for section in polished.sections for item in section.items)
+
+
+def test_two_lines_about_the_same_research_output_become_one_resume_bullet():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [{
+        "id": "research", "title": "学术成果与荣誉", "kind": "campus", "items": [
+            {"id": "paper", "text": "以学生一作发表数据治理方向论文。", "fact_ids": ["e1"], "highlights": ["学生一作"]},
+            {"id": "method", "text": "提出融合注意力机制的预测模型并完成实验验证。", "fact_ids": ["e2"], "highlights": ["注意力机制"]},
+        ],
+    }]})
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {},
+           "input": {"source_text": "以学生一作发表数据治理方向论文，提出融合注意力机制的预测模型并完成实验验证。", "jd": "", "contact": "", "education": []}}
+
+    polished = prepare_draft(job, draft)
+
+    assert len(polished.sections[0].items) == 1
+    assert polished.sections[0].items[0].text == "以学生一作发表数据治理方向论文；提出融合注意力机制的预测模型并完成实验验证。"
+    assert polished.sections[0].items[0].highlights == ["学生一作", "注意力机制"]
+
+
+def test_skill_categories_receive_literal_highlights_when_model_omits_them():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [{
+        "id": "skills", "title": "专业技能", "kind": "skills", "items": [
+            {"id": "realtime", "text": "实时计算：熟悉 Flink 状态管理与 Checkpoint。", "fact_ids": ["e1"]},
+            {"id": "database", "text": "数据库与工程：使用 MySQL 完成索引优化。", "fact_ids": ["e1"], "highlights": ["索引优化"]},
+        ],
+    }]})
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {},
+           "input": {"source_text": "实时计算：熟悉 Flink 状态管理与 Checkpoint。数据库与工程：使用 MySQL 完成索引优化。", "jd": "", "contact": "", "education": []}}
+
+    polished = prepare_draft(job, draft)
+
+    assert polished.sections[0].items[0].highlights == ["实时计算"]
+    assert polished.sections[0].items[1].highlights == ["索引优化", "数据库与工程"]
+
+
+def test_small_headings_and_quantitative_results_receive_literal_emphasis():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [{
+        "id": "project", "title": "数据平台", "kind": "project", "items": [
+            {"id": "architecture", "text": "分层解耦：新增一类数据源只接任务模板，不改主流程；计划准确率达到 99.8%。", "fact_ids": ["e1"]},
+            {"id": "delivery", "text": "独立完成平台交付，覆盖 5 类数据源与 3 类实时链路。", "fact_ids": ["e1"], "highlights": ["独立完成"]},
+        ],
+    }]})
+    source = "分层解耦：新增一类数据源只接任务模板，不改主流程；计划准确率达到 99.8%。独立完成平台交付，覆盖 5 类数据源与 3 类实时链路。"
+    job = {"answered": True, "answer_context": [], "evidence": [], "plan": {},
+           "input": {"source_text": source, "jd": "", "contact": "", "education": []}}
+
+    polished = prepare_draft(job, draft)
+
+    assert polished.sections[0].items[0].highlights == ["分层解耦", "计划准确率达到 99.8%"]
+    assert polished.sections[0].items[1].highlights == ["独立完成", "5 类数据源"]
+    assert all(phrase in item.text for item in polished.sections[0].items for phrase in item.highlights)
 
 
 def test_proficiency_cannot_exceed_the_source_for_any_skill():
@@ -349,6 +408,34 @@ def test_proficiency_cannot_exceed_the_source_for_any_skill():
         assert "Spring Boot" in softened or "Redis" in softened
     assert not proficiency_violations("了解 Docker，只在课程实验里跑过官方镜像。", SAMPLE1)
     assert not validate_draft(make_draft("熟悉 Java，完成查询接口。"), build_evidence("熟悉 Java，完成查询接口。"))
+
+
+def test_proficiency_cannot_be_weakened_below_the_source_wording():
+    from app.gates import proficiency_downgrades
+    from app.skill import build_evidence, validate_draft
+
+    source = "数据采集：熟悉 MySQL Binlog；掌握分库分表基本原理。"
+    claim = "数据采集：了解 MySQL Binlog；了解分库分表基本原理。"
+    assert proficiency_downgrades(claim, source) == ["熟悉MySQL Binlog", "掌握分库分表"]
+    issues = validate_draft(make_draft(claim), build_evidence(source))
+    assert any(issue.severity == "blocking" and issue.code == "attribution" and "弱于原文" in issue.message
+               for issue in issues)
+
+
+def test_skipped_questions_stay_beside_resume_instead_of_entering_body():
+    from app.generation_models import Draft
+    from app.phases import prepare_draft
+
+    draft = Draft.model_validate({"sections": [{"id": "p", "title": "数据平台", "kind": "project", "items": [
+        {"id": "i", "text": "完成数据核对与告警治理。", "fact_ids": ["e1"]}]}]})
+    job = {"answered": True, "answer_context": [], "evidence": [{"id": "e1", "text": "完成数据核对与告警治理。"}],
+           "plan": {"questions": [{"id": "q1", "text": "核对覆盖了哪些配置项？"}], "gaps": []},
+           "input": {"source_text": "完成数据核对与告警治理。", "jd": "", "contact": "", "education": [], "career_stage": "entry"}}
+
+    polished = prepare_draft(job, draft)
+    body = "\n".join(item.text for section in polished.sections for item in section.items)
+    assert "【待补充" not in body
+    assert any("配置项" in note for note in job["coverage_notes"])
 
 
 def test_team_size_is_kept_and_identical_model_output_ignores_headers():
@@ -429,7 +516,7 @@ def test_resume_dates_render_with_dots():
     assert "2023.09" in doc and "2023-09" not in doc
 
 
-def test_usage_count_marker_stays_on_the_trial_sentence_and_spacing_is_tight():
+def test_usage_count_followup_stays_beside_resume_and_spacing_is_tight():
     from app.generation_models import Draft
     from app.phases import prepare_draft
 
@@ -449,8 +536,9 @@ def test_usage_count_marker_stays_on_the_trial_sentence_and_spacing_is_tight():
     body = "\n".join(item.text for section in polished.sections for item in section.items)
     assert "【待补充" not in skills
     assert "， Spring" not in skills and "，Spring Boot" in skills
-    assert body.count("【待补充：使用人数】") == 1
-    assert seat.index("定时任务") < seat.index("试运行") < seat.index("【待补充：使用人数】")
+    assert "【待补充" not in body
+    assert any("多少人" in note for note in job["coverage_notes"])
+    assert seat.index("定时任务") < seat.index("试运行")
 
 
 def test_marker_is_dropped_when_responsibility_or_dates_are_already_present():

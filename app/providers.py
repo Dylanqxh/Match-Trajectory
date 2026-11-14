@@ -8,8 +8,16 @@ import httpx
 from pydantic import Field, SecretStr, model_validator
 
 from app.models import StrictModel
+from app.provider_protocols import (
+    adapt_request,
+    decode_response,
+    request_endpoint,
+    request_headers,
+)
 
 PRESETS = {
+    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-6.1-sol", "help_url": "https://platform.openai.com/api-keys"},
+    "anthropic": {"base_url": "https://api.anthropic.com/v1", "model": "claude-sonnet-5", "help_url": "https://console.anthropic.com/settings/keys"},
     "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "help_url": "https://api-docs.deepseek.com/"},
     "dashscope": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "help_url": "https://help.aliyun.com/zh/model-studio/get-api-key/"},
 }
@@ -66,7 +74,7 @@ def classify_provider_failure(status: int, snippet: str = "", *, redirect: bool 
 
 
 class ProviderConfig(StrictModel):
-    provider: Literal["deepseek", "dashscope", "custom"]
+    provider: Literal["openai", "anthropic", "deepseek", "dashscope", "custom"]
     base_url: str = Field(default="", max_length=1000)
     model: str = Field(min_length=1, max_length=120)
     api_key: SecretStr = Field(min_length=1, max_length=512)
@@ -111,7 +119,6 @@ async def _read_error_snippet(response) -> str:
 
 
 async def probe_provider(config: ProviderConfig, *, transport=None) -> dict:
-    endpoint = config.base_url if config.base_url.endswith("/chat/completions") else config.base_url + "/chat/completions"
     payload = {"model": config.model, "messages": [{"role": "user", "content": 'Return only this JSON object: {"ok":true}'}],
                "max_tokens": 64, "stream": False}
     if config.provider == "deepseek":
@@ -120,7 +127,7 @@ async def probe_provider(config: ProviderConfig, *, transport=None) -> dict:
         async with asyncio.timeout(PROBE_TOTAL_TIMEOUT_SECONDS), httpx.AsyncClient(
             timeout=15, follow_redirects=False, transport=transport, trust_env=False,
         ) as client, client.stream(
-            "POST", endpoint, headers={"Authorization": "Bearer " + config.api_key.get_secret_value()}, json=payload,
+            "POST", request_endpoint(config), headers=request_headers(config), json=adapt_request(config, payload),
         ) as response:
             if response.status_code != 200:
                 snippet = await _read_error_snippet(response)
@@ -137,7 +144,7 @@ async def probe_provider(config: ProviderConfig, *, transport=None) -> dict:
     except httpx.HTTPError:
         raise ProviderError(_PROBE_MESSAGES["network"], "network") from None
     try:
-        text = json.loads(body)["choices"][0]["message"]["content"]
+        text = decode_response(config, body)["choices"][0]["message"]["content"]
         if json.loads(text) != {"ok": True}:
             raise ValueError("unexpected JSON")
     except (ValueError, KeyError, TypeError, IndexError):

@@ -52,17 +52,18 @@ def request(**kwargs):
                            source_text=kwargs.pop("source_text", MATERIAL), send_materials=True, **kwargs)
 
 
-def test_generation_is_idempotent_and_candidate_must_be_adopted(tmp_path):
+def test_generation_is_idempotent_and_ready_candidate_is_adopted_automatically(tmp_path):
     runner, jobs, store, _, model = setup(tmp_path, [PLAN, DRAFT, PASS])
-    job = runner.submit(request())
-    assert runner.submit(request())["id"] == job["id"]
+    job = runner.submit(request(execution_mode="legacy"))
+    assert runner.submit(request(execution_mode="legacy"))["id"] == job["id"]
     with pytest.raises(Conflict):
         runner.submit(request(source_text="不同材料"))
     asyncio.run(runner.run_one())
     finished = jobs.get(job["id"])
     assert finished["state"] == "ready" and finished["review"]["verdict"] == "pass"
     assert finished["calls"] == 3
-    assert store.list() == []
+    assert len(store.list()) == 1
+    assert finished["adopted_resume_id"] == store.list()[0]["id"]
     review_context = model.calls[-1][1]
     assert "plan" not in review_context and "focus" not in review_context
     assert MATERIAL in json.dumps(review_context, ensure_ascii=False)
@@ -169,7 +170,7 @@ def test_program_check_blocks_invented_metric_before_semantic_review(tmp_path):
     assert jobs.get(job["id"])["review"]["verdict"] == "pass"
 
 
-def test_ai_edit_invalidates_review_and_confirmation_cannot_bypass_export_gate(tmp_path):
+def test_ai_edit_invalidates_review_but_current_version_remains_downloadable(tmp_path):
     from app.exports import check_export
     from app.models import ExportRequest
 
@@ -182,8 +183,7 @@ def test_ai_edit_invalidates_review_and_confirmation_cannot_bypass_export_gate(t
     changed = store.save(resume.id, 1, resume.content.model_copy(update={"summary": "自己修改的介绍"}))
     assert changed.ai.review_status == "unreviewed"
     store.confirm(resume.id, 2)
-    with pytest.raises(Conflict):
-        check_export(store.get(resume.id), ExportRequest(format="docx", expected_revision=2))
+    check_export(store.get(resume.id), ExportRequest(format="docx", expected_revision=2))
 
 
 def test_recheck_modified_resume_then_formal_export_is_allowed(tmp_path):
@@ -499,7 +499,7 @@ def manual_resolution(record, **changes):
             "evidence_ids": ["e1"], "explanation": "原文明确说明本人完成接口实现，与当前表述一致。", "acknowledged": True, **changes}
 
 
-def test_source_backed_manual_resolution_preserves_ai_verdict_and_allows_explicit_takeover(tmp_path):
+def test_source_backed_manual_resolution_preserves_ai_verdict_without_blocking_download(tmp_path):
     from app.exports import check_export
     from app.models import ExportRequest
 
@@ -513,8 +513,7 @@ def test_source_backed_manual_resolution_preserves_ai_verdict_and_allows_explici
     assert runner.resolve_issue(record.id, manual_resolution(record)).ai.resolution_history == resolved.ai.resolution_history
     assert jobs.get(job["id"])["issues"] == original_issues
     store.confirm(record.id, 1)
-    with pytest.raises(Conflict):
-        check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
+    check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))
     runner.takeover(record.id, 1)
     store.confirm(record.id, 1)
     check_export(store.get(record.id), ExportRequest(format="docx", expected_revision=1))

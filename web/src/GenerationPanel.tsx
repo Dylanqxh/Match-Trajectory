@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, GenerationJob, Resume } from "./api";
 import { ResumeText } from "./ResumeText";
 import { QualityReport } from "./QualityReport";
+import { AgentExecutionTrace } from "./executionTrace";
 
 const stages: Record<string, string> = { plan: "正在阅读材料", draft: "正在写初稿", review: "正在核对", revise: "正在修改措辞", supervise: "正在决定改哪里" };
 const states: Record<string, string> = { queued: "排队中", running: "正在生成", waiting_input: "想再问你一句", ready: "初稿好了", failed: "还没有生成完", interrupted: "中途停了", cancelled: "已取消" };
@@ -51,7 +52,7 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
   async function command(action: string, body = {}) {
     await api(`/api/generation-jobs/${jobId}/${action}`, body); setRefresh(x => x + 1);
   }
-  const canAdopt = job?.mode === "generate" && ["ready", "failed", "interrupted"].includes(job.state) && (job.draft || job.framework);
+  const canRecoverDraft = job?.mode === "generate" && ["failed", "interrupted"].includes(job.state) && (job.draft || job.framework);
   const gaps = job ? [...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index) : [];
   const failure = job && ["failed", "interrupted"].includes(job.state) ? calmError(job) : "";
   return <section className="generation-panel" aria-label="AI 生成任务">
@@ -61,6 +62,7 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
     {!job && !error && <p className="chat-empty">正在打开这次生成…</p>}
     {job && <>
       <div className="generation-state"><strong>{states[job.state] || "处理中"}</strong><span>{job.input.target_role} · {stages[job.stage] || "整理材料"}</span></div>
+      <AgentExecutionTrace receipts={job.step_receipts} currentStage={job.stage} jobState={job.state}/>
       {failure && <div className="generation-recover"><strong>{failure}</strong><p>可以回到材料区改一改再生成，也可以再试一次。已经写进正文的内容不会凭空补上缺口。</p></div>}
       {job.stop_reason && !failure && <p className="notice">{job.stop_reason}</p>}
       {job.service_warning && <p className="notice">{job.service_warning}</p>}
@@ -83,8 +85,8 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       {job.issues.length > 0 && <div className="generation-issues"><h3>需要核对的地方</h3>{job.issues.map((issue, index) => <p key={index}>
         <strong>{issue.severity === "blocking" ? "需修正" : "建议"}：</strong>{issue.message}{issue.suggestion && <small>{issue.suggestion}</small>}</p>)}</div>}
       <div className="button-row generation-actions">
-        {canAdopt && <button className="primary" disabled={busy} onClick={() => { if (beforeAdopt()) void act(async () => onAdopt(await api<Resume>(`/api/generation-jobs/${jobId}/adopt`, {}))); }}>
-          {job.adopted_resume_id ? "打开已采用的简历" : job.framework ? "采用空框架" : "采用并进入编辑器"}</button>}
+        {canRecoverDraft && <button className="primary" disabled={busy} onClick={() => { if (beforeAdopt()) void act(async () => onAdopt(await api<Resume>(`/api/generation-jobs/${jobId}/adopt`, {}))); }}>
+          把未完成草稿放入编辑器</button>}
         {["failed", "interrupted"].includes(job.state) && job.continuation?.allowed !== false && <button className="secondary" disabled={busy} onClick={() => void act(() => command("resume"))}>再试一次</button>}
         {["queued", "running", "waiting_input"].includes(job.state) && <button className="text-button" disabled={busy} onClick={() => void act(() => command("cancel"))}>取消任务</button>}
       </div>

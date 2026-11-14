@@ -38,15 +38,26 @@ describe("AgentPanel", () => {
     expect(html).toContain("告诉 Agent 想怎么改");
   });
 
-  it("renders a before-after proposal with explicit apply and discard actions", () => {
-    const html = renderToStaticMarkup(<AgentProposalCard proposal={proposal} busy={false}
-      onApply={() => undefined} onDiscard={() => undefined}/>);
+  it("renders an automatically saved before-after result without confirmation actions", () => {
+    const html = renderToStaticMarkup(<AgentProposalCard proposal={{ ...proposal, state: "applied" }}/>);
 
     expect(html).toContain("修改前");
     expect(html).toContain("修改后");
-    expect(html).toContain("应用为新版本");
-    expect(html).toContain("放弃提案");
+    expect(html).toContain("已自动保存");
+    expect(html).not.toContain("应用为新版本");
+    expect(html).not.toContain("放弃提案");
     expect(html).toContain("500ms");
+  });
+
+  it("explains that a risky change was not saved and allows a new instruction", () => {
+    const html = renderToStaticMarkup(<AgentProposalCard proposal={{ ...proposal, state: "blocked", issues: [{
+      item_id: "query", severity: "blocking", code: "reference", message: "缺少原文依据",
+      suggestion: "补充材料",
+    }] }}/>);
+
+    expect(html).toContain("未保存");
+    expect(html).toContain("缺少原文依据");
+    expect(html).not.toContain("应用为新版本");
   });
 
   it("rejects a response that belongs to the previously selected target", () => {

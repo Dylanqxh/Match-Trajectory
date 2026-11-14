@@ -5,6 +5,15 @@ import httpx
 import pytest
 
 
+def test_popular_provider_presets_have_fixed_official_base_urls():
+    from app.providers import PRESETS, ProviderConfig
+
+    assert PRESETS["openai"]["base_url"] == "https://api.openai.com/v1"
+    assert PRESETS["anthropic"]["base_url"] == "https://api.anthropic.com/v1"
+    assert ProviderConfig(provider="openai", model="gpt-6.1-sol", api_key="test").base_url == "https://api.openai.com/v1"
+    assert ProviderConfig(provider="anthropic", model="claude-sonnet-5", api_key="test").base_url == "https://api.anthropic.com/v1"
+
+
 def test_probe_uses_only_synthetic_text_and_returns_no_secret():
     from app.providers import ProviderConfig, probe_provider
 
@@ -19,6 +28,30 @@ def test_probe_uses_only_synthetic_text_and_returns_no_secret():
     config = ProviderConfig(provider="custom", base_url="https://provider.example/v1", model="test-model", api_key="unit-test-secret")
     result = asyncio.run(probe_provider(config, transport=httpx.MockTransport(handler)))
     assert result["json_probe_passed"] is True
+    assert "unit-test-secret" not in json.dumps(result)
+
+
+def test_anthropic_probe_uses_native_messages_protocol():
+    from app.providers import ProviderConfig, probe_provider
+
+    def handler(request):
+        assert request.url.path == "/v1/messages"
+        assert request.headers["x-api-key"] == "unit-test-secret"
+        assert request.headers["anthropic-version"] == "2023-06-01"
+        assert "authorization" not in request.headers
+        body = json.loads(request.content)
+        assert body["model"] == "claude-sonnet-5"
+        assert body["messages"] == [{"role": "user", "content": 'Return only this JSON object: {"ok":true}'}]
+        return httpx.Response(200, json={
+            "content": [{"type": "text", "text": '{"ok":true}'}],
+            "stop_reason": "end_turn", "usage": {"input_tokens": 8, "output_tokens": 4},
+        })
+
+    config = ProviderConfig(provider="anthropic", model="claude-sonnet-5", api_key="unit-test-secret")
+    result = asyncio.run(probe_provider(config, transport=httpx.MockTransport(handler)))
+
+    assert result["json_probe_passed"] is True
+    assert result["provider"] == "anthropic"
     assert "unit-test-secret" not in json.dumps(result)
 
 

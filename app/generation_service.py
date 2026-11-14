@@ -147,28 +147,31 @@ class GenerationService:
             if (job["mode"] != "generate" or job["state"] not in ("ready", "failed", "interrupted")
                     or (not job["draft"] and not job["framework"])):
                 raise Conflict("任务仍在执行、已取消或没有候选，请等待或先处理错误")
-            if job["adopted_resume_id"]:
-                result.append(self.store._read(connection, job["adopted_resume_id"]))
-                return
-            inputs = job["input"]
-            draft = Draft.model_validate(job["draft"]) if job["draft"] else None
-            fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
-            from app.gates import header_contact
-
-            contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
-            content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
-                name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
-            status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
-                i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
-            info = AIInfo(job_id=job_id, review_job_id=job_id, review_status=status, content_hash=resume_hash(content),
-                          skill_version=job["skill"]["version"], issues=job["issues"], quality=job.get("review", {}).get("quality") if job.get("review") else None,
-                          source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
-            record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
-            job["adopted_resume_id"] = record.id
-            result.append(record)
+            result.append(self._materialize(job, connection))
 
         self.jobs.mutate(job_id, apply)
         return result[0]
+
+    def _materialize(self, job, connection):
+        """Create the editable resume once; safe to call from completion and the legacy endpoint."""
+        if job["adopted_resume_id"]:
+            return self.store._read(connection, job["adopted_resume_id"])
+        inputs = job["input"]
+        draft = Draft.model_validate(job["draft"]) if job["draft"] else None
+        fixed = [Education.model_validate(e) for e in inputs.get("education", [])]
+        from app.gates import header_contact
+
+        contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
+        content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
+            name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
+        status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
+            i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
+        info = AIInfo(job_id=job["id"], review_job_id=job["id"], review_status=status, content_hash=resume_hash(content),
+                      skill_version=job["skill"]["version"], issues=job["issues"], quality=job.get("review", {}).get("quality") if job.get("review") else None,
+                      source_map={c.id: c.fact_ids for c in draft.claims() + draft.metadata_claims([e["id"] for e in job["evidence"]])} if draft else {})
+        record = self.store.create(content, "ai", inputs["source_text"], ai=info, connection=connection)
+        job["adopted_resume_id"] = record.id
+        return record
 
     def recheck(self, resume_id, revision, request_id):
         record = self.store.get(resume_id)

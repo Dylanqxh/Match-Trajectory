@@ -46,7 +46,7 @@ def test_examples_cover_all_roles_without_publishing_evaluation_inputs_as_prompt
     from pathlib import Path
 
     cases = json.loads(Path("skills/resume-writing/examples/writing-boundaries.json").read_text(encoding="utf-8"))
-    assert {case["role"] for case in cases} == {"backend", "algorithm", "data-analysis", "product", "operations", "general"}
+    assert {case["role"] for case in cases} == {"backend", "frontend", "testing", "data-engineering", "algorithm", "data-analysis", "product", "operations", "general"}
     assert all(case["facts"] and case["ordinary"] and case["improved"] and case["forbidden"] and case["why"] for case in cases)
     assert all("evaluation_reference" not in case for case in cases)
 

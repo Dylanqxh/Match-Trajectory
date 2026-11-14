@@ -20,6 +20,11 @@ KIND_LABELS = {
 }
 _AWARD = re.compile(r"优秀|铜奖|银奖|金奖|一等奖|二等奖|三等奖|奖学金|获评")
 _NUMERIC = re.compile(r"\d+(?:[.,]\d+)?")
+_METRIC_HIGHLIGHTS = (
+    re.compile(r"[\u4e00-\u9fffA-Za-z]{2,12}(?:达到|提升至|提高至|降低至|减少至|缩短至)\s*\d+(?:\.\d+)?%"),
+    re.compile(r"\d+(?:\.\d+)?\s*\+?\s*(?:类数据源|类实时链路|张表|个?任务|份(?:知识库)?文档|条(?:用例|规则)|人)"),
+    re.compile(r"\d+(?:\.\d+)?\s*(?:秒|分钟|小时|天/周|天|周)(?:以内|以下)?"),
+)
 
 
 def _field(row, name):
@@ -56,7 +61,7 @@ def section_text(row):
     parts = []
     for value in (_field(row, "title"), _field(row, "organization"), _field(row, "role")):
         shown = (value or "").strip()
-        if not shown or shown in labels or shown in parts:
+        if not shown or shown in labels or shown in parts or any(shown in part for part in parts):
             continue
         parts.append(shown)
     return " · ".join(parts)
@@ -193,6 +198,26 @@ def arrange_sections(sections, jd: str = ""):
                          "items": [{"text": item.text} for item in section.items]})
         by_id[section.id] = section
     return [by_id[row["id"]] for row in arrange_draft_sections(payloads, jd)]
+
+
+def presentation_highlights(text: str, explicit: list[str] | None = None) -> list[str]:
+    """Return at most two literal scan anchors without changing the source text."""
+    highlights = [value for value in dict.fromkeys(explicit or []) if value and value in text]
+    heading = re.match(r"^([^：:\n]{2,20})[：:]", text)
+    metrics = [match.group(0).strip() for pattern in _METRIC_HIGHLIGHTS for match in pattern.finditer(text)]
+    candidates = ([heading.group(1).strip()] if heading and not highlights else []) + metrics
+    if highlights:
+        candidates.extend([heading.group(1).strip()] if heading else [])
+    for value in candidates:
+        if value in highlights or len(value) > 30:
+            continue
+        proposed = [*highlights, value]
+        covered = sum(len(phrase) * text.count(phrase) for phrase in proposed)
+        if covered <= min(50, len(text) * 0.6):
+            highlights.append(value)
+        if len(highlights) == 2:
+            break
+    return highlights[:2]
 
 
 def text_runs(text, highlights):

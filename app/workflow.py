@@ -273,6 +273,8 @@ class Workflow(GenerationService):
                                                 "content_hash": resume_hash(record.content), "issues": current["issues"],
                                                 "manual_takeover": False, "quality": current["review"].get("quality") if current["review"] else None})
             self.store.write_ai(connection, resume_id, record.revision, info)
+        elif current["mode"] == "generate" and (current.get("draft") or current.get("framework")):
+            self._materialize(current, connection)
         current.update(state="ready", run_token="", error="")
 
     async def run_one(self):

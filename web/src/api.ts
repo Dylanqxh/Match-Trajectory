@@ -20,7 +20,7 @@ export interface GenerationSummary { id: string; state: string; stage: string; t
 export interface GenerationJob extends GenerationSummary {
   engine?: string; engine_version?: string; stop_reason?: string;
   budget_policy?: { version: string; max_calls: number; max_revisions: number; total_ms: number };
-  step_receipts?: { step: string; next_stage: string; state: string; calls: number }[];
+  step_receipts?: { step: string; step_id?: string; next_stage: string; state: string; calls: number }[];
   continuation?: { allowed: boolean; reason: string };
   last_diagnostic?: { category: string; fields: { path: string; type: string; rule?: string }[]; finish_reason?: string };
   service_warning?: string;
@@ -46,28 +46,19 @@ export async function request(path: string, options: RequestInit = {}): Promise<
   return response;
 }
 export interface ChatMessage { role: "user" | "assistant"; text: string }
-export interface ChatSession {
-  id: string;
-  messages: ChatMessage[];
-  collected: { name: string; contact: string; target_role: string; role_direction: string; source_text: string; jd: string; career_stage: string };
-  job_id: string | null;
-  job_state: string | null;
-  questions: { id: string; text: string }[];
-  coverage_notes: string[];
-}
-export interface UploadPreview { id: string; text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string; name?: string }
+export interface UploadPreview { text: string; reliable: boolean; reason: string; warnings: string[]; pages: number; kind: string; name?: string }
 export interface AgentTarget { type: "resume" | "job"; id: string; label: string; revision: number; state?: string | null; blockedReason?: string }
 export interface AgentChange { item_id: string; before: string; after: string; reason: string; evidence_ids: string[] }
 export interface AgentProposal {
-  id: string; state: "ready" | "blocked" | "applied" | "discarded"; base_revision: number;
+  id: string; state: "ready" | "blocked" | "applied" | "discarded" | "undone" | "unchanged"; base_revision: number;
   changes: AgentChange[]; issues: GenerationIssue[]; content?: Content;
 }
 export interface AgentSession {
   id: string; target: AgentTarget; messages: ChatMessage[]; proposal: AgentProposal | null;
-  status: "idle" | "running" | "error"; error: string;
+  status: "idle" | "running" | "error"; error: string; can_undo: boolean;
 }
-export interface AgentApplyResponse { session: AgentSession; resume: Resume }
-export interface IntakeFields { name: string; contact: string; target_role: string; education: { id: string; school: string; degree: string; major: string }[]; jd: string; source_text: string }
+export interface AgentApplyResponse { session: AgentSession; resume: Resume | null }
+export interface IntakeFields { name: string; contact: string; target_role: string; education: Education[]; jd: string; source_text: string }
 export async function api<T>(path: string, body?: unknown, method = "POST"): Promise<T> {
   const response = await request(path, body === undefined ? {} : { method, body: JSON.stringify(body) });
   return response.json();

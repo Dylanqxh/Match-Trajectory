@@ -28,14 +28,17 @@ def base_content():
 
 
 class ScriptedEditClient:
-    def __init__(self, text):
+    def __init__(self, text, before_return=None):
         self.text = text
+        self.before_return = before_return
         self.contexts = []
 
     async def propose_edit(self, config, context, schema):
         self.contexts.append(context)
         current = ResumeContent.model_validate(context["current_content"])
         current.sections[0].items[0].text = self.text
+        if self.before_return:
+            self.before_return()
         return Completion(schema(
             reply="我整理了一处可核对的修改。",
             content=current,
@@ -75,18 +78,20 @@ def ready_job(service):
                                       "review": {"verdict": "pass", "issues": []}})
 
 
-def test_resume_agent_proposes_then_applies_a_new_revision_without_sending_header_fields(tmp_path):
+def test_resume_agent_auto_applies_a_safe_edit_without_sending_header_fields(tmp_path):
     from app.resume_agent import AgentMessageInput, AgentTargetInput
 
     service, store, client = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
     record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
 
     session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
-    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="突出接口性能优化结果")))
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="突出接口性能优化结果")))
 
-    assert proposed["target"]["revision"] == 1
-    assert proposed["proposal"]["state"] == "ready"
-    assert proposed["proposal"]["changes"] == [{
+    assert result["resume"].revision == 2
+    assert result["session"]["target"]["revision"] == 2
+    assert result["session"]["proposal"]["state"] == "applied"
+    assert result["session"]["can_undo"] is True
+    assert result["session"]["proposal"]["changes"] == [{
         "item_id": "query",
         "before": "使用 Java 完成查询接口。",
         "after": "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。",
@@ -96,55 +101,73 @@ def test_resume_agent_proposes_then_applies_a_new_revision_without_sending_heade
     sent = str(client.contexts)
     assert "林然" not in sent
     assert "linran@example.com" not in sent
-
-    applied = service.apply(session["id"], proposed["proposal"]["id"])
-
-    assert applied["resume"].revision == 2
-    assert applied["resume"].content.name == "林然"
-    assert applied["resume"].content.contact == "linran@example.com"
-    assert applied["resume"].content.sections[0].items[0].text.endswith("300ms。")
+    assert result["resume"].content.name == "林然"
+    assert result["resume"].content.contact == "linran@example.com"
+    assert result["resume"].content.sections[0].items[0].text.endswith("300ms。")
 
 
-def test_resume_agent_blocks_a_new_unsupported_number(tmp_path):
+def test_resume_agent_blocks_an_unsupported_edit_but_accepts_the_next_clarification(tmp_path):
     from app.resume_agent import AgentMessageInput, AgentTargetInput
 
     service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，支撑 100 万用户。")
     record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口。")
     session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
 
-    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="写得更有影响力")))
+    blocked = asyncio.run(service.post(session["id"], AgentMessageInput(text="写得更有影响力")))
 
-    assert proposed["proposal"]["state"] == "blocked"
-    assert proposed["proposal"]["issues"]
-    with pytest.raises(Conflict, match="风险"):
-        service.apply(session["id"], proposed["proposal"]["id"])
+    assert blocked["resume"] is None
+    assert blocked["session"]["proposal"]["state"] == "blocked"
+    assert blocked["session"]["proposal"]["issues"]
+    assert store.get(record.id).revision == 1
+
+    service.client.text = "完成 Java 查询接口开发。"
+    fixed = asyncio.run(service.post(session["id"], AgentMessageInput(text="不要加数字，只精简措辞")))
+
+    assert fixed["resume"].revision == 2
+    assert fixed["session"]["proposal"]["state"] == "applied"
+    assert fixed["resume"].content.sections[0].items[0].text == "完成 Java 查询接口开发。"
+
+
+def test_resume_agent_does_not_create_a_revision_for_a_noop_response(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口。")
+    record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口。")
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="保持事实不变，看看是否需要调整")))
+
+    assert result["resume"] is None
+    assert result["session"]["proposal"]["state"] == "unchanged"
+    assert result["session"]["can_undo"] is False
     assert store.get(record.id).revision == 1
 
 
-def test_resume_agent_rejects_a_stale_proposal(tmp_path):
+def test_resume_agent_rejects_a_stale_auto_apply_without_overwriting_manual_work(tmp_path):
     from app.resume_agent import AgentMessageInput, AgentTargetInput
 
-    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    service, store, client = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
     record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
     session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
-    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="突出性能结果")))
-    store.save(record.id, 1, base_content().model_copy(update={"summary": "手工保存的新版本"}))
+    client.before_return = lambda: store.save(
+        record.id, 1, base_content().model_copy(update={"summary": "手工保存的新版本"}),
+    )
 
     with pytest.raises(Conflict, match="变化"):
-        service.apply(session["id"], proposed["proposal"]["id"])
+        asyncio.run(service.post(session["id"], AgentMessageInput(text="突出性能结果")))
 
     assert store.get(record.id).revision == 2
+    assert store.get(record.id).content.summary == "手工保存的新版本"
 
 
-def test_resume_agent_applies_a_generated_task_candidate_as_a_versioned_resume(tmp_path):
+def test_resume_agent_auto_applies_a_generated_task_candidate_as_a_versioned_resume(tmp_path):
     from app.resume_agent import AgentMessageInput, AgentTargetInput
 
     service, _store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
     job = ready_job(service)
 
     session = service.create(AgentTargetInput(target_type="job", target_id=job["id"]))
-    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
-    applied = service.apply(session["id"], proposed["proposal"]["id"])
+    applied = asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
 
     assert applied["resume"].revision == 2
     assert applied["session"]["target"]["type"] == "resume"
@@ -157,15 +180,50 @@ def test_job_apply_conflict_does_not_create_an_orphan_agent_job(tmp_path):
     service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
     job = ready_job(service)
     session = service.create(AgentTargetInput(target_type="job", target_id=job["id"]))
-    proposed = asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
-    adopted = service.workflow.adopt(job["id"])
-    store.save(adopted.id, adopted.revision, adopted.content.model_copy(update={"summary": "用户刚保存的新版本"}))
+    def race():
+        adopted = service.workflow.adopt(job["id"])
+        store.save(adopted.id, adopted.revision, adopted.content.model_copy(update={"summary": "用户刚保存的新版本"}))
+
+    service.client.before_return = race
     job_count = len(service.jobs.list())
 
     with pytest.raises(Conflict, match="已经被采用并修改"):
-        service.apply(session["id"], proposed["proposal"]["id"])
+        asyncio.run(service.post(session["id"], AgentMessageInput(text="补上原文里的性能结果")))
 
     assert len(service.jobs.list()) == job_count
+
+
+def test_resume_agent_undo_restores_the_base_as_a_new_revision(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+    applied = asyncio.run(service.post(session["id"], AgentMessageInput(text="突出性能结果")))
+
+    undone = service.undo(session["id"])
+
+    assert applied["resume"].revision == 2
+    assert undone["resume"].revision == 3
+    assert undone["resume"].content == base_content()
+    assert undone["session"]["can_undo"] is False
+    assert [row.revision for row in store.history(record.id)] == [1, 2, 3]
+
+
+def test_resume_agent_rejects_stale_undo_without_overwriting_manual_work(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    service, store, _ = agent_service(tmp_path, "使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    record = store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+    applied = asyncio.run(service.post(session["id"], AgentMessageInput(text="突出性能结果")))
+    manual = store.save(record.id, applied["resume"].revision, applied["resume"].content.model_copy(update={"summary": "手工补充"}))
+
+    with pytest.raises(Conflict, match="变化"):
+        service.undo(session["id"])
+
+    assert store.get(record.id).revision == manual.revision
+    assert store.get(record.id).content.summary == "手工补充"
 
 
 def api_transport(request):
@@ -202,7 +260,7 @@ def open_agent_client(tmp_path, monkeypatch):
     return client, app
 
 
-def test_agent_api_reuses_a_target_session_and_keeps_legacy_chat_available(tmp_path, monkeypatch):
+def test_agent_api_reuses_a_target_session(tmp_path, monkeypatch):
     client, app = open_agent_client(tmp_path, monkeypatch)
     try:
         record = app.state.store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
@@ -212,7 +270,6 @@ def test_agent_api_reuses_a_target_session_and_keeps_legacy_chat_available(tmp_p
         assert first.status_code == 201
         assert second.status_code == 201
         assert first.json()["id"] == second.json()["id"]
-        assert client.post("/api/chat/sessions").status_code == 201
     finally:
         client.__exit__(None, None, None)
 
@@ -230,18 +287,19 @@ def test_agent_api_rejects_a_task_without_a_candidate(tmp_path, monkeypatch):
         client.__exit__(None, None, None)
 
 
-def test_agent_api_stale_apply_returns_conflict_without_overwriting_latest_resume(tmp_path, monkeypatch):
+def test_agent_api_auto_applies_and_can_undo(tmp_path, monkeypatch):
     client, app = open_agent_client(tmp_path, monkeypatch)
     try:
         record = app.state.store.create(base_content(), "manual", source_text="使用 Java 完成查询接口，将响应时间从 500ms 优化至 300ms。")
         session = client.post("/api/agent/sessions", json={"target_type": "resume", "target_id": record.id}).json()
-        proposed = client.post(f"/api/agent/sessions/{session['id']}/messages", json={"text": "补上性能结果"}).json()
-        latest = base_content().model_copy(update={"summary": "用户刚刚保存的新内容"})
-        app.state.store.save(record.id, 1, latest)
+        applied = client.post(f"/api/agent/sessions/{session['id']}/messages", json={"text": "补上性能结果"})
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["resume"]["revision"] == 2
 
-        response = client.post(f"/api/agent/sessions/{session['id']}/proposals/{proposed['proposal']['id']}/apply")
+        undone = client.post(f"/api/agent/sessions/{session['id']}/undo")
 
-        assert response.status_code == 409
-        assert app.state.store.get(record.id).content.summary == "用户刚刚保存的新内容"
+        assert undone.status_code == 200, undone.text
+        assert undone.json()["resume"]["revision"] == 3
+        assert undone.json()["resume"]["content"]["sections"][0]["items"][0]["text"] == "使用 Java 完成查询接口。"
     finally:
         client.__exit__(None, None, None)

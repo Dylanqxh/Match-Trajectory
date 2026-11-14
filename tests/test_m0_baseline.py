@@ -113,12 +113,12 @@ def test_new_generation_accepts_only_the_direction_enum():
 
     from app.generation_models import GenerationInput
 
-    for index, direction in enumerate(("product", "backend", "algorithm", "data-analysis", "operations", "other"), start=1):
+    for index, direction in enumerate(("product", "backend", "data-engineering", "algorithm", "data-analysis", "operations", "frontend", "testing", "other"), start=1):
         row = GenerationInput(request_id=f"request-009{index}", target_role="目标岗位", role_direction=direction,
                               name="测试", contact="a@example.com", source_text="完成查询接口", send_materials=True)
         assert row.role_direction == direction
     with pytest.raises(ValidationError):
-        GenerationInput(request_id="request-0099", target_role="前端", role_direction="frontend")
+        GenerationInput(request_id="request-0099", target_role="设计", role_direction="design")
 
 
 def test_saved_task_without_role_direction_keeps_its_skill_on_retry(tmp_path):

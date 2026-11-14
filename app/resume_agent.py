@@ -1,7 +1,8 @@
 """Target-bound resume editing Agent.
 
-The model can only propose a candidate. Program gates recompute the actual
-diff and explicit apply writes a new resume revision with optimistic locking.
+The model proposes a candidate, while deterministic gates recompute the actual
+diff. Safe candidates are saved as a new revision immediately; blocked
+candidates never write. Every automatic save can be undone as another revision.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from app.jobs import fingerprint
 from app.models import AIInfo, ResumeContent, StrictModel, resume_hash
 from app.providers import ProviderError
 from app.resume_layout import education_text, period_text, section_text
-from app.skill import build_evidence, load_skill, validate_draft
+from app.skill import build_evidence, infer_role_direction, load_skill, validate_draft
 from app.store import Conflict, NotFound, timestamp
 
 metadata = MetaData()
@@ -90,8 +91,9 @@ class AgentService:
             "id": uuid.uuid4().hex,
             "target_type": resolved.target_type,
             "target_id": resolved.target_id,
-            "messages": [{"role": "assistant", "text": f"已连接到「{snapshot['label']}」。告诉我想怎么改，我会先给出可核对的提案，不会直接覆盖当前版本。"}],
+            "messages": [{"role": "assistant", "text": f"已连接到「{snapshot['label']}」。告诉我想怎么改；通过事实校验后会自动保存为新版本，你可以随时撤销。"}],
             "proposal": None,
+            "undo": None,
             "status": "idle",
             "error": "",
         }
@@ -105,8 +107,6 @@ class AgentService:
         session = self._read(session_id)
         if session.get("status") == "running":
             raise Conflict("Agent 正在处理上一条请求")
-        if (session.get("proposal") or {}).get("state") in {"ready", "blocked"}:
-            raise Conflict("请先应用或放弃当前提案，再提出下一项修改")
         snapshot = self._snapshot(AgentTargetInput(target_type=session["target_type"], target_id=session["target_id"]))
         session["messages"].append({"role": "user", "text": message.text})
         session.update(status="running", error="")
@@ -119,19 +119,28 @@ class AgentService:
             session["proposal"] = proposal
             session["messages"].append({"role": "assistant", "text": completion.value.reply})
             session.update(status="idle", error="")
+            if not proposal["changes"]:
+                proposal["state"] = "unchanged"
+                session["messages"].append({"role": "assistant", "text": "没有检测到正文变化，因此没有创建空版本。你可以换一种更具体的修改要求。"})
+                self._write(session)
+                return {"session": self.view(session), "resume": None}
+            if proposal["state"] == "blocked":
+                session["messages"].append({"role": "assistant", "text": "这次修改包含无法由现有材料支持的内容，因此没有保存。你可以直接补充材料或换一种说法。"})
+                self._write(session)
+                return {"session": self.view(session), "resume": None}
         except ProviderError as exc:
             session["messages"].append({"role": "assistant", "text": str(exc)})
             session.update(status="error", error=str(exc), proposal=None)
-        self._write(session)
-        return self.view(session)
+            self._write(session)
+            return {"session": self.view(session), "resume": None}
+        try:
+            return self._apply(session, proposal)
+        except Conflict as exc:
+            session.update(status="idle", error=str(exc))
+            self._write(session)
+            raise
 
-    def apply(self, session_id: str, proposal_id: str) -> dict:
-        session = self._read(session_id)
-        proposal = session.get("proposal") or {}
-        if proposal.get("id") != proposal_id or proposal.get("state") not in {"ready", "blocked"}:
-            raise Conflict("修改提案不存在或已处理")
-        if proposal["state"] == "blocked":
-            raise Conflict("当前提案有新增事实风险，不能应用")
+    def _apply(self, session: dict, proposal: dict) -> dict:
         target = AgentTargetInput(target_type=session["target_type"], target_id=session["target_id"])
         snapshot = self._snapshot(target)
         if (snapshot["base_revision"] != proposal["base_revision"]
@@ -152,25 +161,40 @@ class AgentService:
         if target.target_type == "job":
             if record is None:
                 raise Conflict("生成候选没有可应用的简历")
+            base_revision = record.revision
             saved = self.store.save(record.id, record.revision, candidate, ai=info)
             session.update(target_type="resume", target_id=saved.id)
         else:
+            base_revision = proposal["base_revision"]
             saved = self.store.save(target.target_id, proposal["base_revision"], candidate, ai=info)
         proposal["state"] = "applied"
-        session["messages"].append({"role": "assistant", "text": f"已应用为版本 v{saved.revision}。事实审阅需要针对这个新版本重新运行。"})
+        session["undo"] = {"resume_id": saved.id, "base_revision": base_revision,
+                           "applied_revision": saved.revision}
+        session["messages"].append({"role": "assistant", "text": f"已自动保存为版本 v{saved.revision}，需要时可以一键撤销。事实审阅需要针对这个新版本重新运行。"})
         session["status"] = "idle"
         self._write(session)
         return {"session": self.view(session), "resume": saved}
 
-    def discard(self, session_id: str, proposal_id: str) -> dict:
+    def undo(self, session_id: str) -> dict:
         session = self._read(session_id)
-        proposal = session.get("proposal") or {}
-        if proposal.get("id") != proposal_id or proposal.get("state") not in {"ready", "blocked"}:
-            raise Conflict("修改提案不存在或已处理")
-        proposal["state"] = "discarded"
-        session["messages"].append({"role": "assistant", "text": "已放弃这份提案，当前简历没有改变。"})
+        undo = session.get("undo") or {}
+        if not undo:
+            raise Conflict("当前没有可撤销的 Agent 修改")
+        current = self.store.get(undo["resume_id"])
+        if current.revision != undo["applied_revision"]:
+            raise Conflict("当前内容已变化，不能撤销并覆盖后续修改")
+        base = next((row for row in self.store.history(current.id)
+                     if row.revision == undo["base_revision"]), None)
+        if base is None:
+            raise Conflict("撤销所需的历史版本不存在")
+        saved = self.store.save(current.id, current.revision, base.content)
+        if session.get("proposal"):
+            session["proposal"]["state"] = "undone"
+        session["undo"] = None
+        session["messages"].append({"role": "assistant", "text": f"已撤销上一处 Agent 修改，并保存为版本 v{saved.revision}。"})
+        session.update(status="idle", error="")
         self._write(session)
-        return self.view(session)
+        return {"session": self.view(session), "resume": saved}
 
     def view(self, session: dict) -> dict:
         snapshot = self._snapshot(AgentTargetInput(target_type=session["target_type"], target_id=session["target_id"]))
@@ -180,6 +204,7 @@ class AgentService:
                        "revision": snapshot["base_revision"], "state": snapshot.get("state")},
             "messages": session.get("messages", [])[-40:],
             "proposal": session.get("proposal"),
+            "can_undo": bool(session.get("undo")),
             "status": session.get("status", "idle"),
             "error": session.get("error", ""),
         }
@@ -218,7 +243,7 @@ class AgentService:
             evidence = [row.model_dump() for row in build_evidence(source_text or "\n".join(_blocks(record.content).values()))]
             refs = [row["id"] for row in evidence]
             source_map = {item_id: refs for item_id in _blocks(record.content)}
-            bundle = load_skill(record.content.target_role, role_direction="other")
+            bundle = load_skill(record.content.target_role, role_direction=infer_role_direction(record.content.target_role))
             skill = {"role": bundle.role, "version": bundle.version, "instructions": bundle.instructions,
                      "resources": bundle.resources, "stage_resources": bundle.stage_resources,
                      "stage_instructions": bundle.stage_instructions}

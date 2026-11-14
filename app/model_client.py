@@ -7,6 +7,12 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.budget import DEFAULT_POLICY, budget_for_job
+from app.provider_protocols import (
+    adapt_request,
+    decode_response,
+    request_endpoint,
+    request_headers,
+)
 from app.providers import ProviderConfig, ProviderError, classify_provider_failure
 
 REQUEST_TIMEOUT = DEFAULT_POLICY.request_ms / 1000
@@ -132,7 +138,7 @@ class ModelClient:
         body = await self._post(config, payload, policy)
         envelope = {}
         try:
-            envelope = json.loads(body)
+            envelope = decode_response(config, body)
             choice = envelope["choices"][0]
             tools = choice["message"]["tool_calls"]
             if choice["finish_reason"] != "tool_calls" or len(tools) != 1:
@@ -173,7 +179,7 @@ class ModelClient:
             payload["thinking"] = {"type": "disabled"}
         body = await self._post(config, payload, policy)
         try:
-            envelope = json.loads(body)
+            envelope = decode_response(config, body)
             choice = envelope["choices"][0]
             reason = choice["finish_reason"]
             if reason != "stop":
@@ -228,7 +234,7 @@ class ModelClient:
         body = await self._post(config, payload, policy)
         envelope = {}
         try:
-            envelope = json.loads(body)
+            envelope = decode_response(config, body)
             choice = envelope["choices"][0]
             if choice["finish_reason"] != "stop":
                 raise ModelOutputError("Agent 输出被截断，当前简历未改变", usage=safe_usage(envelope))
@@ -243,13 +249,13 @@ class ModelClient:
         return Completion(value, safe_usage(envelope))
 
     async def _post(self, config, payload, policy=DEFAULT_POLICY):
-        endpoint = config.base_url if config.base_url.endswith("/chat/completions") else config.base_url + "/chat/completions"
+        endpoint = request_endpoint(config)
+        headers = {**request_headers(config), "Accept-Encoding": "identity"}
+        wire_payload = adapt_request(config, payload)
         try:
             async with asyncio.timeout(min(REQUEST_TIMEOUT, policy.request_ms / 1000)), httpx.AsyncClient(
                 timeout=min(REQUEST_TIMEOUT, policy.request_ms / 1000), follow_redirects=False, trust_env=False, transport=self.transport,
-            ) as client, client.stream("POST", endpoint, json=payload, headers={
-                "Authorization": "Bearer " + config.api_key.get_secret_value(), "Accept-Encoding": "identity",
-            }) as response:
+            ) as client, client.stream("POST", endpoint, json=wire_payload, headers=headers) as response:
                 if response.status_code != 200:
                     from app.providers import _read_error_snippet, _without_secret
 

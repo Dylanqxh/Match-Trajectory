@@ -201,7 +201,7 @@ class GenerationInput(StrictModel):
     name: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
     target_role: str = Field(default="", max_length=80)
-    role_direction: Literal["product", "backend", "algorithm", "data-analysis", "operations", "other"] | None = None
+    role_direction: Literal["product", "backend", "frontend", "testing", "data-engineering", "algorithm", "data-analysis", "operations", "other"] | None = None
     source_text: str = Field(default="", max_length=20000)
     jd: str = Field(default="", max_length=8000)
     allow_questions: bool = True

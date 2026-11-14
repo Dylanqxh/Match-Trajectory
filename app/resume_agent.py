@@ -78,7 +78,13 @@ def _structure(content: ResumeContent) -> tuple:
 
 
 def _structure_label(content: ResumeContent) -> str:
-    return " → ".join(section.title for section in content.sections) or "（无经历板块）"
+    rows = []
+    if content.education:
+        rows.append("教育顺序：" + " → ".join(row.school or "未命名教育经历" for row in content.education))
+    for section in content.sections:
+        items = " → ".join((item.text.strip()[:32] or "空白条目") for item in section.items) or "无条目"
+        rows.append(f"{section.title} [{section.kind}]：{items}")
+    return "\n".join(rows) or "（无经历板块）"
 
 
 def _issue_key(issue) -> tuple[str, str, str]:

@@ -159,9 +159,20 @@
 **Interfaces:**
 - Produces: an evidence table separating source tests, local browser verification, container configuration, real provider tests, and clean-machine tests.
 
-- [ ] Run project-scoped Pytest with a fresh basetemp, Ruff, Vitest, TypeScript, Vite build, and `git diff --check`.
-- [ ] Start the app with isolated data and verify tabs, task hierarchy, Agent trace, and model-settings UI in the browser with zero console errors.
-- [ ] Run the diagnostic tool against a local deterministic OpenAI-compatible fixture; do not use or request a real key for automated verification.
-- [ ] Validate Compose configuration and build/start only if the local Docker engine is available.
-- [ ] Update README evidence boundaries and mark completed plan checkboxes without claiming unperformed clean-device or real-provider validation.
-- [ ] Review the complete diff for data loss, credential exposure, stale task visibility, and responsive layout regressions; fix Important findings with RED-GREEN tests.
+- [x] Run project-scoped Pytest with a fresh basetemp, Ruff, Vitest, TypeScript, Vite build, and `git diff --check`.
+- [x] Start the app with isolated data and verify tabs, task hierarchy, Agent trace, and model-settings UI in the browser with zero console errors.
+- [x] Run the diagnostic tool against a local deterministic OpenAI-compatible fixture; do not use or request a real key for automated verification.
+- [x] Validate Compose configuration and build/start only if the local Docker engine is available.
+- [x] Update README evidence boundaries and mark completed plan checkboxes without claiming unperformed clean-device or real-provider validation.
+- [x] Review the complete diff for data loss, credential exposure, stale task visibility, and responsive layout regressions; fix Important findings with RED-GREEN tests.
+
+### Delivery evidence (2026-11-14)
+
+| Boundary | Result | What it proves |
+| --- | --- | --- |
+| Source tests | 357 Pytest, 22 Vitest, Ruff, TypeScript, Vite build, and diff checks passed | Current source behavior and static correctness on this Windows development machine |
+| Local browser | Isolated workspace exercised section tabs, nested and unmatched tasks, custom Base URL connection, completed/waiting Agent trace, and 600 px responsive layout; console errors: 0 | The implemented UI and local deterministic workflow function in the current browser/runtime |
+| Model diagnostic | Direct documented command accepted a hidden synthetic key and reached a loopback OpenAI-compatible fixture at the normalized `/v1/chat/completions` endpoint | Script entry point, URL normalization, and safe local protocol path; not real-provider quality |
+| Compose configuration | `docker compose config` passed with loopback-only host publishing and named data volume | Compose syntax and resolved configuration |
+| Container build/runtime | Not run: Docker client exists but `docker info` cannot reach a Docker API/engine | No claim that this exact image has built or started on this machine |
+| Real providers / clean devices | Not run | No claim of provider compatibility beyond protocol tests, native cross-system packaging, or clean-machine deployment |

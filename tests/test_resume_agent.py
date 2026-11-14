@@ -217,6 +217,31 @@ def test_resume_agent_applies_section_reordering_without_rewriting_facts(tmp_pat
     assert result["resume"].revision == 2
     assert [row.id for row in result["resume"].content.sections] == ["skills", "project"]
     assert result["session"]["proposal"]["changes"][0]["item_id"] == "document"
+    assert result["session"]["proposal"]["changes"][0]["before"] != result["session"]["proposal"]["changes"][0]["after"]
+
+
+def test_resume_agent_describes_item_reordering_as_a_visible_document_diff(tmp_path):
+    from app.resume_agent import AgentMessageInput, AgentTargetInput
+
+    source = "使用 Java 完成查询接口。编写接口测试。"
+    service, store, client = agent_service(tmp_path, source)
+    content = base_content()
+    content.sections[0].items.append(Item(id="test-item", text="编写接口测试。"))
+    record = store.create(content, "manual", source_text=source)
+    session = service.create(AgentTargetInput(target_type="resume", target_id=record.id))
+
+    async def reorder(config, context, schema):
+        candidate = ResumeContent.model_validate(context["current_content"])
+        candidate.sections[0].items = list(reversed(candidate.sections[0].items))
+        return Completion(schema(reply="已调整条目顺序。", content=candidate, reasons=[]), {})
+
+    client.propose_edit = reorder
+    result = asyncio.run(service.post(session["id"], AgentMessageInput(text="把测试放在第一条")))
+    change = result["session"]["proposal"]["changes"][0]
+
+    assert [row.id for row in result["resume"].content.sections[0].items] == ["test-item", "query"]
+    assert change["item_id"] == "document"
+    assert change["before"] != change["after"]
 
 
 def test_resume_agent_rejects_a_stale_auto_apply_without_overwriting_manual_work(tmp_path):

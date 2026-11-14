@@ -1,0 +1,17 @@
+.git
+.idea
+.pytest_cache
+.ruff_cache
+.superpowers
+.sdd
+.venv
+artifacts
+build
+data
+dist
+node_modules
+pytest-of-*
+.env
+.env.*
+*.log
+__pycache__

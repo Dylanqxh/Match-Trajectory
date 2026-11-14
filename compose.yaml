@@ -1,0 +1,11 @@
+services:
+  match-trajectory:
+    build: .
+    ports:
+      - "127.0.0.1:${MATCH_TRAJECTORY_PORT:-18765}:18765"
+    volumes:
+      - "match-trajectory-data:/app/data"
+    restart: unless-stopped
+
+volumes:
+  match-trajectory-data:

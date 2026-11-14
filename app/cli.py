@@ -47,14 +47,28 @@ def workspace_lock(directory: Path):
         handle.close()
 
 
-def bind_local_socket(port: int) -> socket.socket:
+SUPPORTED_HOSTS = ("127.0.0.1", "0.0.0.0")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Match-Trajectory 本地简历工作台")
+    parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--host", choices=SUPPORTED_HOSTS, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=18765)
+    parser.add_argument("--no-browser", action="store_true")
+    return parser
+
+
+def bind_local_socket(host: str, port: int) -> socket.socket:
+    if host not in SUPPORTED_HOSTS:
+        raise ValueError("监听地址仅支持 127.0.0.1 或 0.0.0.0")
     if not 0 <= port <= 65535:
         raise ValueError("端口必须介于 0 和 65535")
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        listener.bind(("127.0.0.1", port))
+        listener.bind((host, port))
     except OSError:
-        listener.bind(("127.0.0.1", 0))
+        listener.bind((host, 0))
     listener.listen(128)
     return listener
 
@@ -90,16 +104,13 @@ def main():
     if "--export-worker" in sys.argv:
         from app.export_worker import main as worker_main
         raise SystemExit(worker_main())
-    parser = argparse.ArgumentParser(description="Match-Trajectory 本地简历工作台")
-    parser.add_argument("--data-dir", type=Path)
-    parser.add_argument("--port", type=int, default=18765)
-    parser.add_argument("--no-browser", action="store_true")
+    parser = build_parser()
     args = parser.parse_args()
     root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
     directory = (args.data_dir or root / "data").resolve()
     configure_runtime_temp(directory)
     try:
-        with workspace_lock(directory), bind_local_socket(args.port) as listener:
+        with workspace_lock(directory), bind_local_socket(args.host, args.port) as listener:
             import uvicorn
 
             from app.main import create_app
@@ -119,7 +130,7 @@ def main():
                         time.sleep(0.25)
                 threading.Thread(target=open_when_ready, daemon=True).start()
             print(f"本地工作台：{url}\n资料目录：{directory}\n按 Ctrl+C 停止服务。", flush=True)
-            server = uvicorn.Server(uvicorn.Config(create_app(directory), host="127.0.0.1", port=port, access_log=False))
+            server = uvicorn.Server(uvicorn.Config(create_app(directory), host=args.host, port=port, access_log=False))
             server.run(sockets=[listener])
     except (WorkspaceBusy, OSError, ValueError) as error:
         parser.exit(1, str(error) + "\n")

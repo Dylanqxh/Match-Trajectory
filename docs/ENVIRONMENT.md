@@ -50,6 +50,18 @@ SSH已认证为仓库所有者账号；既有私钥只交由ssh使用，没有�
 
 用户要求不增加C盘环境占用，因此仅把Desktop安装包下载到D盘并验证Docker官方签名。未来启用引擎需要单独处理Windows/WSL系统组件；应用程序目录及Linux数据盘可指定D盘，但不能承诺系统组件完全不写C盘。原生React/Python开发、OCR和文件转换不依赖本机Docker引擎。
 
+## 2026-11-14 Compose 公开部署入口
+
+仓库现在提供 `Dockerfile`、`compose.yaml` 和 `.dockerignore`。镜像分阶段锁定安装前端与 Python 依赖，构建静态前端，并按锁定的 Python Playwright 包安装匹配 Chromium；运行层包含中文字体和健康检查。应用在容器内监听 `0.0.0.0`，Compose 对宿主机只发布 `127.0.0.1:${MATCH_TRAJECTORY_PORT:-18765}`，资料保存到命名卷 `match-trajectory-data`。
+
+公开使用命令为：
+
+```bash
+docker compose up --build -d
+```
+
+本机当前记录仍是“Compose 客户端已准备、Docker 服务端未验证”。因此本轮可以验证 Dockerfile/Compose 结构、应用启动参数与源码测试，但没有本机镜像构建或容器运行证据。Windows、macOS、Linux 用户都必须先具备可用 Docker 引擎；原生免 Docker 安装包仍是独立发布轨道，需要分别在干净系统构建和验收。
+
 ## 重跑检查
 
 ```powershell

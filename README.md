@@ -4,7 +4,7 @@
 
 ## 开始使用
 
-1. 双击根目录 `Start-App.cmd`，浏览器打开本机工作台。Linux / macOS 可在构建前端后运行 `python -m app.cli --no-browser`，再打开终端里打印的本机地址。
+1. 已配置的 Windows 开发机可双击根目录 `Start-App.cmd`；Windows、macOS、Linux 的公开仓库用户建议使用下方 Docker Compose 入口。浏览器打开 `http://127.0.0.1:18765`。
 2. 点击左下角“模型连接”：可选 OpenAI／ChatGPT、Anthropic／Claude、DeepSeek、阿里云百炼，或填写 OpenAI 兼容中转站的 Base URL、模型 ID 与 Key。连接测试会区分 Key 无效、余额不足、限流、网络和超时，不回显 Key。勾选“记住 Key”只会尝试写入本机系统钥匙串；否则 Key 仅留在本次服务内存。
 3. 中间先明确简历方向，再上传旧简历或 JD（PDF、Word 的 .docx / .doc、TXT、Markdown；最大 8 MB，PDF 最多 12 页）。产品、后端、前端、测试、数据开发、算法／Agent、数据分析和运营会加载各自规则；其他方向明确使用通用规则。材料里已有的姓名、联系方式、学校、教育时间和经历不用重填；手工输入始终优先。扫描版 PDF 会请你改为粘贴。
 4. 生成仍走原来的分阶段流程。追问最多一轮、最多三个问题，回复「跳过」也会给出完整初稿。已有经历缺的细节标在那一条上；岗位差距只出现在旁边，不写进正文。
@@ -32,6 +32,20 @@ macOS／Linux 在项目 Python 环境中使用同一命令，将路径分隔符�
 姓名与联系方式单独保留在本机；教育信息作为事实材料发送，程序固定回填，不由模型改写。你主动写在材料正文中的隐私也会随正文发送。资料在项目 `data/`，不提交到 Git。
 
 不使用模型时，填写材料后点击“进入编辑器”，仍可编辑、保存、确认和导出。也可使用明确标为虚构的示例体验。
+
+## Windows、macOS、Linux 一条命令启动
+
+先安装并启动 Docker Desktop（Windows / macOS）或 Docker Engine + Compose 插件（Linux），然后在仓库根目录执行：
+
+```bash
+docker compose up --build -d
+```
+
+打开 `http://127.0.0.1:18765`。停止服务使用 `docker compose down`；简历数据保存在 Docker 命名卷 `match-trajectory-data`，普通的 `down` 和重新构建不会删除它。只有明确执行 `docker compose down -v` 才会删除该卷及其中数据。
+
+首次构建需要下载 Node、Python、Chromium 和中文字体镜像层，耗时与网络有关。端口被占用时可在启动前设置 `MATCH_TRAJECTORY_PORT`（例如 PowerShell：`$env:MATCH_TRAJECTORY_PORT=18766`），再访问对应端口。Compose 默认只把端口发布到本机回环地址，不向局域网开放；模型 Key 仍只应在应用设置或隐藏输入中填写，不要写入仓库、Compose 文件或 `.env`。
+
+这是一条跨系统、可重复的容器部署路径，不等于“完全不需要运行环境”：用户仍需可用的 Docker 引擎，且设备架构必须受到上游基础镜像和 Playwright Chromium 支持。Windows 原生便携包目前只有开发机证据；macOS / Linux 原生安装包和各系统干净机器验收仍未完成，不能把源码测试或 Compose 静态检查描述为已经在所有设备实机通过。
 
 在 PowerShell 中启动：
 

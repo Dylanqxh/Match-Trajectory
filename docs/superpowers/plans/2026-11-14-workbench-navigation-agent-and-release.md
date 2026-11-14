@@ -144,11 +144,11 @@
 - Extends: CLI with `--host` restricted to `127.0.0.1` or `0.0.0.0`; default stays `127.0.0.1`.
 - Produces: Compose service `match-trajectory`, host mapping `127.0.0.1:18765:18765`, and persistent volume mounted at `/app/data`.
 
-- [ ] Add failing CLI tests for default host, container host, invalid host, and port fallback behavior.
-- [ ] Implement host-aware binding without changing native defaults.
-- [ ] Add static deployment tests asserting locked dependency install, built frontend, matching Chromium, CJK font configuration, loopback-only publishing, healthcheck, and persistent data.
-- [ ] Implement Dockerfile, Compose, ignore rules, and exact one-command documentation.
-- [ ] Run deployment tests and `docker compose config` when Docker CLI is available; record inability to build if no engine exists rather than claiming success.
+- [x] Add failing CLI tests for default host, container host, invalid host, and port fallback behavior.
+- [x] Implement host-aware binding without changing native defaults.
+- [x] Add static deployment tests asserting locked dependency install, built frontend, matching Chromium, CJK font configuration, loopback-only publishing, healthcheck, and persistent data.
+- [x] Implement Dockerfile, Compose, ignore rules, and exact one-command documentation.
+- [x] Run deployment tests and `docker compose config` when Docker CLI is available; record inability to build if no engine exists rather than claiming success.
 
 ### Task 7: Full verification and delivery evidence
 

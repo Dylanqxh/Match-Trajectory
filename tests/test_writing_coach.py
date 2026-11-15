@@ -42,6 +42,30 @@ def test_atomic_claim_audit_is_loaded_only_for_review_and_revision():
     assert "因果归因" in bundle.stage_instructions["revise"]
 
 
+def test_contribution_architecture_guides_every_generation_stage():
+    from app.skill import load_skill
+
+    bundle = load_skill("产品经理", role_direction="product")
+    resource = "references/contribution-architecture.md"
+    assert all(resource in bundle.stage_resources[stage] for stage in ("plan", "draft", "review", "revise"))
+    for stage in ("plan", "draft", "review", "revise"):
+        instructions = bundle.stage_instructions[stage]
+        assert "背景、结果、贡献" in instructions
+        assert "依赖、并行、补充" in instructions
+        assert "归属、分母、基线、时间窗" in instructions
+
+
+def test_product_operations_and_highlights_keep_evidence_meaning_visible():
+    from app.skill import load_skill
+
+    product = load_skill("产品经理", role_direction="product").stage_instructions["draft"]
+    operations = load_skill("用户运营", role_direction="operations").stage_instructions["draft"]
+    assert "研究证据、决策证据、交付证据、验证证据、业务结果" in product
+    assert "原型不等于交付" in product
+    assert "活动次数不自动等于增长" in operations
+    assert "指标名称＋变化" in operations
+
+
 def test_examples_cover_all_roles_without_publishing_evaluation_inputs_as_prompts():
     from pathlib import Path
 

@@ -58,7 +58,8 @@ def load_skill(target_role: str, career_stage="unspecified", has_career_gap=Fals
     else:
         role = selectable_roles.get(role_direction, "general")
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "skills" / "resume-writing"
-    base = ["SKILL.md", "references/contract.md", "references/evidence/common.md", f"references/roles/{role}.md", "references/candidates/common.md"]
+    base = ["SKILL.md", "references/contract.md", "references/evidence/common.md",
+            "references/contribution-architecture.md", f"references/roles/{role}.md", "references/candidates/common.md"]
     candidate = {"entry": "entry", "experienced": "experienced", "transition": "transition"}.get(career_stage)
     if candidate:
         base.append(f"references/candidates/{candidate}.md")

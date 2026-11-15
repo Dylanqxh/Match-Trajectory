@@ -18,12 +18,74 @@ def test_popular_provider_presets_have_fixed_official_base_urls():
     ("https://relay.example/v1", "openai_compatible", "https://relay.example/v1/chat/completions"),
     ("https://relay.example/v1/", "openai_compatible", "https://relay.example/v1/chat/completions"),
     ("https://relay.example/v1/chat/completions", "openai_compatible", "https://relay.example/v1/chat/completions"),
+    ("https://relay.example/v1", "responses", "https://relay.example/v1/responses"),
+    ("https://relay.example/v1/chat/completions", "responses", "https://relay.example/v1/responses"),
     ("https://api.anthropic.com/v1", "anthropic", "https://api.anthropic.com/v1/messages"),
 ])
 def test_provider_endpoint_normalization_is_shared_and_idempotent(base_url, protocol, expected):
     from app.provider_protocols import normalize_endpoint
 
     assert normalize_endpoint(base_url, protocol) == expected
+
+
+def test_responses_protocol_is_explicit_and_custom_only():
+    from app.providers import ProviderConfig
+
+    config = ProviderConfig(provider="custom", protocol="responses", base_url="https://relay.example/v1",
+                            model="responses-model", api_key="unit-test-secret")
+    assert config.protocol == "responses"
+    with pytest.raises(ValueError, match="Responses"):
+        ProviderConfig(provider="openai", protocol="responses", model="gpt-6.1-sol", api_key="unit-test-secret")
+
+
+def test_responses_probe_uses_input_blocks_and_normalizes_output_text():
+    from app.providers import ProviderConfig, probe_provider
+
+    def handler(request):
+        assert request.url.path == "/v1/responses"
+        body = json.loads(request.content)
+        assert "messages" not in body and "max_tokens" not in body
+        assert body["max_output_tokens"] == 64
+        assert body["store"] is False
+        assert body["input"] == [{"role": "user", "content": [
+            {"type": "input_text", "text": 'Return only this JSON object: {"ok":true}'},
+        ]}]
+        return httpx.Response(200, json={
+            "status": "completed",
+            "output": [{"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": '{"ok":true}'},
+            ]}],
+            "usage": {"input_tokens": 9, "output_tokens": 5, "total_tokens": 14},
+        })
+
+    config = ProviderConfig(provider="custom", protocol="responses", base_url="https://relay.example/v1",
+                            model="responses-model", api_key="unit-test-secret")
+    result = asyncio.run(probe_provider(config, transport=httpx.MockTransport(handler)))
+    assert result["json_probe_passed"] is True
+    assert result["protocol"] == "responses"
+    assert "unit-test-secret" not in json.dumps(result)
+
+
+def test_responses_decoder_maps_incomplete_and_function_call_envelopes():
+    from app.provider_protocols import decode_response
+    from app.providers import ProviderConfig
+
+    config = ProviderConfig(provider="custom", protocol="responses", base_url="https://relay.example/v1",
+                            model="responses-model", api_key="unit-test-secret")
+    truncated = decode_response(config, json.dumps({
+        "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}, "output": [],
+    }).encode())
+    assert truncated["choices"][0]["finish_reason"] == "length"
+
+    tool = decode_response(config, json.dumps({
+        "status": "completed",
+        "output": [{"type": "function_call", "call_id": "call-1", "name": "delegate_to_writer",
+                    "arguments": '{"action":"deliver","issue_indices":[],"rationale":"done"}'}],
+    }).encode())
+    choice = tool["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["tool_calls"][0]["id"] == "call-1"
+    assert choice["message"]["tool_calls"][0]["function"]["name"] == "delegate_to_writer"
 
 
 def test_probe_uses_only_synthetic_text_and_returns_no_secret():

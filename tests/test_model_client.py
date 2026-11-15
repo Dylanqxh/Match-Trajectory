@@ -16,6 +16,11 @@ def anthropic_config():
     return ProviderConfig(provider="anthropic", model="claude-sonnet-5", api_key="never-print-this-secret")
 
 
+def responses_config():
+    return ProviderConfig(provider="custom", protocol="responses", base_url="https://relay.example/v1",
+                          model="responses-model", api_key="never-print-this-secret")
+
+
 def response(content='{"verdict":"pass","issues":[]}', reason="stop"):
     return {"choices": [{"finish_reason": reason, "message": {"content": content}}], "usage": {"total_tokens": 23}}
 
@@ -77,6 +82,52 @@ def test_anthropic_tool_use_is_normalized_for_supervisor_delegate():
     completion = asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).delegate(
         anthropic_config(), {"issues": [{"index": 0}]}))
 
+    assert completion.value.action == "revise"
+    assert completion.value.issue_indices == [0]
+
+
+def test_responses_text_is_used_by_the_real_structured_generation_path():
+    from app.model_client import ModelClient
+
+    def handler(request):
+        assert request.url.path == "/v1/responses"
+        body = json.loads(request.content)
+        assert [row["role"] for row in body["input"]] == ["system", "user"]
+        assert all(block["type"] == "input_text" for row in body["input"] for block in row["content"])
+        assert body["max_output_tokens"] > 0
+        assert "temperature" not in body
+        return httpx.Response(200, json={
+            "status": "completed",
+            "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": '{"verdict":"pass","issues":[]}'},
+            ]}],
+            "usage": {"input_tokens": 17, "output_tokens": 6, "total_tokens": 23},
+        })
+
+    completion = asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).complete(
+        responses_config(), "review", {"instructions": "只核对原文", "candidate": {}}, Review))
+    assert completion.value.verdict == "pass"
+    assert completion.usage == {"prompt_tokens": 17, "completion_tokens": 6, "total_tokens": 23}
+
+
+def test_responses_function_call_is_used_by_the_real_delegate_path():
+    from app.model_client import ModelClient
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["tools"][0]["type"] == "function"
+        assert body["tools"][0]["name"] == "delegate_to_writer"
+        assert "parameters" in body["tools"][0] and "function" not in body["tools"][0]
+        assert body["tool_choice"] == {"type": "function", "name": "delegate_to_writer"}
+        return httpx.Response(200, json={
+            "status": "completed",
+            "output": [{"type": "function_call", "call_id": "call-1", "name": "delegate_to_writer",
+                        "arguments": '{"action":"revise","issue_indices":[0],"rationale":"修正已有问题"}'}],
+            "usage": {"input_tokens": 20, "output_tokens": 8, "total_tokens": 28},
+        })
+
+    completion = asyncio.run(ModelClient(transport=httpx.MockTransport(handler)).delegate(
+        responses_config(), {"issues": [{"index": 0}]}))
     assert completion.value.action == "revise"
     assert completion.value.issue_indices == [0]
 

@@ -75,12 +75,15 @@ def classify_provider_failure(status: int, snippet: str = "", *, redirect: bool 
 
 class ProviderConfig(StrictModel):
     provider: Literal["openai", "anthropic", "deepseek", "dashscope", "custom"]
+    protocol: Literal["chat_completions", "responses"] = "chat_completions"
     base_url: str = Field(default="", max_length=1000)
     model: str = Field(min_length=1, max_length=120)
     api_key: SecretStr = Field(min_length=1, max_length=512)
 
     @model_validator(mode="after")
     def validate_address(self):
+        if self.protocol == "responses" and self.provider != "custom":
+            raise ValueError("Responses 协议仅用于自定义接口")
         if self.provider in PRESETS:
             preset = PRESETS[self.provider]["base_url"]
             if self.base_url and self.base_url.rstrip("/") != preset:
@@ -150,7 +153,7 @@ async def probe_provider(config: ProviderConfig, *, transport=None) -> dict:
     except (ValueError, KeyError, TypeError, IndexError):
         raise ProviderError("模型未按要求返回 JSON；此组合尚不能用于后续结构化流程", "model_unavailable") from None
     key = config.api_key.get_secret_value()
-    return {"provider": config.provider, "base_url": config.base_url, "model": config.model,
+    return {"provider": config.provider, "protocol": config.protocol, "base_url": config.base_url, "model": config.model,
             "configured": True, "key_mask": "••••" + (key[-4:] if len(key) > 8 else ""),
             "json_probe_passed": True, "resume_generation_verified": False,
             "message": "短文本连接测试通过；尚未验证完整简历生成"}

@@ -6,24 +6,37 @@ const choices = {
   anthropic: { name: "Anthropic / Claude", model: "claude-sonnet-5", help: "https://console.anthropic.com/settings/keys", note: "Claude 官方 API · Messages" },
   deepseek: { name: "DeepSeek", model: "deepseek-flash", help: "https://api-docs.deepseek.com/", note: "DeepSeek 官方 API · OpenAI 兼容" },
   dashscope: { name: "阿里云百炼", model: "qwen-plus", help: "https://help.aliyun.com/zh/model-studio/get-api-key/", note: "阿里云北京地域 · OpenAI 兼容" },
-  custom: { name: "自定义中转站（OpenAI 兼容）", model: "", help: "", note: "填写中转站提供的 Base URL、模型 ID 与 Key" },
+  custom: { name: "自定义中转站", model: "", help: "", note: "填写中转站提供的 Base URL、协议、模型 ID 与 Key" },
 };
 type Choice = keyof typeof choices;
+export type ProviderProtocol = "chat_completions" | "responses";
+
+export function CustomProtocolSelector({ protocol, onChange }: {
+  protocol: ProviderProtocol; onChange: (protocol: ProviderProtocol) => void;
+}) {
+  return <label>接口协议<select aria-label="接口协议" value={protocol}
+    onChange={event => onChange(event.target.value as ProviderProtocol)}>
+    <option value="chat_completions">Chat Completions</option>
+    <option value="responses">Responses</option>
+  </select><span className="field-hint">按中转站文档选择；选错协议时连接测试会失败，不会自动重复请求。</span></label>;
+}
 
 export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
   const [provider, setProvider] = useState<Choice>("deepseek");
   const [model, setModel] = useState("deepseek-flash");
   const [baseUrl, setBaseUrl] = useState("");
+  const [protocol, setProtocol] = useState<ProviderProtocol>("chat_completions");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [connected, setConnected] = useState(false);
   const [remember, setRemember] = useState(false);
   useEffect(() => {
-    void api<{ configured: boolean; provider?: Choice; model?: string; base_url?: string }>("/api/model-settings").then(row => {
+    void api<{ configured: boolean; provider?: Choice; protocol?: ProviderProtocol; model?: string; base_url?: string }>("/api/model-settings").then(row => {
       if (row.configured && row.provider && row.provider in choices) {
         setConnected(true);
-        setProvider(row.provider); setModel(row.model || ""); setBaseUrl(row.base_url || "");
+        setProvider(row.provider); setProtocol(row.protocol || "chat_completions");
+        setModel(row.model || ""); setBaseUrl(row.base_url || "");
         setMessage(`本次服务已连接 ${row.model}；更换配置时请重新填写 Key 并测试。`);
       }
     }).catch(() => {});
@@ -32,7 +45,8 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     setBusy(true); setMessage("");
     try {
       const result = await api<{ message: string }>("/api/model-settings/test", {
-        provider, model, api_key: key, base_url: provider === "custom" ? baseUrl : "", remember,
+        provider, protocol: provider === "custom" ? protocol : "chat_completions", model, api_key: key,
+        base_url: provider === "custom" ? baseUrl : "", remember,
       });
       setKey(""); setConnected(true); setMessage(result.message);
       onSaved?.();
@@ -53,12 +67,14 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     <p className="model-settings-intro">选择官方服务时只需填写 Key 和模型；使用第三方中转站时再填写 Base URL。连接测试只发送合成短文本，不发送简历。</p>
     <fieldset disabled={busy}>
       <label>供应商<select aria-label="供应商" value={provider} onChange={event => {
-        const next = event.target.value as Choice; setProvider(next); setModel(choices[next].model); setKey(""); setMessage("");
+        const next = event.target.value as Choice; setProvider(next); setProtocol("chat_completions");
+        setModel(choices[next].model); setKey(""); setMessage("");
       }}>{Object.entries(choices).map(([value, choice]) => <option value={value} key={value}>{choice.name}</option>)}</select></label>
       <div className="provider-summary"><span>{choices[provider].note}</span>
         {choices[provider].help && <a href={choices[provider].help} target="_blank" rel="noreferrer">获取 API Key ↗</a>}
       </div>
-      {provider === "custom" && <label>Base URL<input aria-label="接口地址" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="例如 https://relay.example.com/v1"/><span className="field-hint">必须是 HTTPS；本机服务可使用 http://127.0.0.1。请填写中转站给出的完整兼容地址。</span></label>}
+      {provider === "custom" && <><label>Base URL<input aria-label="接口地址" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="例如 https://relay.example.com/v1"/><span className="field-hint">必须是 HTTPS；本机服务可使用 http://127.0.0.1。请填写中转站给出的 Base URL。</span></label>
+        <CustomProtocolSelector protocol={protocol} onChange={setProtocol}/></>}
       <div className="model-settings-grid">
         <label>模型 ID<input aria-label="模型 ID" value={model} onChange={e => setModel(e.target.value)} placeholder="填写账号实际可调用的模型"/><span className="field-hint">选择预设后仍可修改为账号实际开通的模型 ID</span></label>
         <label>API Key<input aria-label="API Key" type="password" autoComplete="new-password" value={key} onChange={e => setKey(e.target.value)} placeholder="粘贴 API Key"/><span className="field-hint">只用于本机服务发起调用，页面不会回显</span></label>

@@ -78,11 +78,13 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         remembered = key_store.load(data_dir)
         if remembered:
             try:
-                config = providers.ProviderConfig(provider=remembered["provider"], base_url=remembered["base_url"],
-                                                  model=remembered["model"], api_key=remembered["api_key"])
+                config = providers.ProviderConfig(provider=remembered["provider"], protocol=remembered["protocol"],
+                                                  base_url=remembered["base_url"], model=remembered["model"],
+                                                  api_key=remembered["api_key"])
                 registry.register(config)
                 secret = remembered["api_key"]
-                app.state.provider = {"provider": config.provider, "base_url": config.base_url, "model": config.model,
+                app.state.provider = {"provider": config.provider, "protocol": config.protocol,
+                                      "base_url": config.base_url, "model": config.model,
                                       "configured": True, "key_mask": "••••" + (secret[-4:] if len(secret) > 8 else ""),
                                       "json_probe_passed": False, "resume_generation_verified": False, "key_storage": "keyring",
                                       "message": "已从系统钥匙串恢复连接。"}
@@ -275,7 +277,7 @@ def create_app(data_dir: Path, *, web_dir: Path | None = None, model_client=None
         result["config_revision"] = registry.register(body)
         secret = body.api_key.get_secret_value()
         if body.remember:
-            storage = key_store.save(data_dir, body.provider, body.model, body.base_url, secret)
+            storage = key_store.save(data_dir, body.provider, body.model, body.base_url, secret, body.protocol)
             result["message"] += "。已保存到系统钥匙串，可随时清除。" if storage == "keyring" else "。本机没有可用的系统钥匙串，Key 只保留在本次服务内存中，重启后需要重新填写。"
         else:
             key_store.clear(data_dir)

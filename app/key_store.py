@@ -12,7 +12,8 @@ def _keyring():
     return keyring
 
 
-def save(data_dir: Path, provider: str, model: str, base_url: str, api_key: str) -> str:
+def save(data_dir: Path, provider: str, model: str, base_url: str, api_key: str,
+         protocol: str = "chat_completions") -> str:
     try:
         ring = _keyring()
         ring.set_password(SERVICE, ACCOUNT, api_key)
@@ -20,7 +21,7 @@ def save(data_dir: Path, provider: str, model: str, base_url: str, api_key: str)
             return "memory"
     except Exception:  # noqa: BLE001 -- missing or locked keyring means the key stays in memory
         return "memory"
-    meta = {"provider": provider, "model": model, "base_url": base_url}
+    meta = {"provider": provider, "protocol": protocol, "model": model, "base_url": base_url}
     path = data_dir / "model-remember.json"
     path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     if api_key and api_key in path.read_text(encoding="utf-8"):
@@ -40,7 +41,8 @@ def load(data_dir: Path) -> dict | None:
         return None
     if not secret or not meta.get("provider") or not meta.get("model"):
         return None
-    return {"provider": meta["provider"], "model": meta["model"], "base_url": meta.get("base_url") or "", "api_key": secret}
+    return {"provider": meta["provider"], "protocol": meta.get("protocol") or "chat_completions",
+            "model": meta["model"], "base_url": meta.get("base_url") or "", "api_key": secret}
 
 
 def clear(data_dir: Path) -> None:

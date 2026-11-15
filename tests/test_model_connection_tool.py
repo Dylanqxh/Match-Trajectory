@@ -43,6 +43,25 @@ def test_diagnostic_probe_returns_the_safe_runtime_error_category():
     assert "diagnostic-secret" not in str(caught.value)
 
 
+def test_diagnostic_probe_can_select_the_responses_protocol():
+    from tools.test_model_connection import run_probe
+
+    def handler(request):
+        assert request.url == "https://relay.example/v1/responses"
+        body = json.loads(request.content)
+        assert body["store"] is False and "input" in body
+        return httpx.Response(200, json={
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": '{"ok":true}'}]}],
+        })
+
+    result = run_probe("https://relay.example/v1", "relay-model", "diagnostic-secret", protocol="responses",
+                       transport=httpx.MockTransport(handler))
+    assert result["endpoint"] == "https://relay.example/v1/responses"
+    assert result["protocol"] == "responses"
+    assert "diagnostic-secret" not in json.dumps(result)
+
+
 def test_documented_direct_script_entrypoint_can_import_the_application():
     result = subprocess.run(
         [sys.executable, "tools/test_model_connection.py", "--help"],
@@ -55,3 +74,5 @@ def test_documented_direct_script_entrypoint_can_import_the_application():
 
     assert result.returncode == 0, result.stderr
     assert "Chat Completions" in result.stdout
+    assert "Responses" in result.stdout
+    assert "--protocol" in result.stdout

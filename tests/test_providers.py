@@ -333,6 +333,45 @@ def test_remembered_key_stays_in_the_keyring_and_out_of_files(tmp_path, monkeypa
         assert ("match-trajectory", "model-api-key") not in saved
 
 
+def test_remembered_responses_protocol_is_restored_without_persisting_the_key(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from app import providers
+    from tests_support import new_client
+
+    saved = {}
+    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(
+        set_password=lambda service, account, password: saved.__setitem__((service, account), password),
+        get_password=lambda service, account: saved.get((service, account)),
+        delete_password=lambda service, account: saved.pop((service, account), None),
+    ))
+    real_probe = providers.probe_provider
+
+    async def probe(config):
+        return await real_probe(config, transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": '{"ok":true}'}]}],
+        })))
+
+    monkeypatch.setattr(providers, "probe_provider", probe)
+    payload = {"provider": "custom", "protocol": "responses", "base_url": "https://relay.example/v1",
+               "model": "responses-model", "api_key": "remember-this-secret", "remember": True}
+    with new_client(tmp_path) as client:
+        response = client.post("/api/model-settings/test", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["protocol"] == "responses"
+    meta = json.loads((tmp_path / "model-remember.json").read_text(encoding="utf-8"))
+    assert meta["protocol"] == "responses"
+    assert "remember-this-secret" not in json.dumps(meta)
+
+    with new_client(tmp_path) as restarted:
+        restored = restarted.get("/api/model-settings").json()
+        assert restored["configured"] is True
+        assert restored["protocol"] == "responses"
+        assert restored["model"] == "responses-model"
+
+
 def test_missing_keyring_keeps_the_key_in_memory_only(tmp_path, monkeypatch):
     import sys
 

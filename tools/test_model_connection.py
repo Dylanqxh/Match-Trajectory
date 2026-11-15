@@ -11,7 +11,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.provider_protocols import normalize_endpoint
+from app.provider_protocols import request_endpoint
 from app.providers import ProviderConfig, ProviderError, probe_provider
 
 
@@ -21,35 +21,38 @@ class DiagnosticError(RuntimeError):
         self.category = category
 
 
-def run_probe(base_url: str, model: str, api_key: str, *, transport=None) -> dict:
-    config = ProviderConfig(provider="custom", base_url=base_url, model=model, api_key=api_key)
+def run_probe(base_url: str, model: str, api_key: str, *, protocol: str = "chat_completions", transport=None) -> dict:
+    config = ProviderConfig(provider="custom", protocol=protocol, base_url=base_url, model=model, api_key=api_key)
     try:
         result = asyncio.run(probe_provider(config, transport=transport))
     except ProviderError as error:
         raise DiagnosticError(str(error), error.category) from None
     return {
         "ok": True,
-        "endpoint": normalize_endpoint(config.base_url),
+        "endpoint": request_endpoint(config),
+        "protocol": config.protocol,
         "model": config.model,
         "message": result["message"],
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="测试 OpenAI 兼容的 Chat Completions 模型连接")
+    parser = argparse.ArgumentParser(description="测试 OpenAI Chat Completions / Responses 模型连接")
     parser.add_argument("--base-url", help="中转站 Base URL，例如 https://relay.example.com/v1")
     parser.add_argument("--model", help="中转站提供的模型 ID")
+    parser.add_argument("--protocol", choices=("chat_completions", "responses"), default="chat_completions",
+                        help="接口协议：Chat Completions 或 Responses")
     args = parser.parse_args(argv)
     base_url = (args.base_url or input("Base URL: ")).strip()
     model = (args.model or input("模型 ID: ")).strip()
     api_key = getpass.getpass("API Key（输入不会显示，也不会保存）: ")
     try:
-        result = run_probe(base_url, model, api_key)
+        result = run_probe(base_url, model, api_key, protocol=args.protocol)
     except (DiagnosticError, ValueError) as error:
         category = getattr(error, "category", "invalid_configuration")
         print(f"测试失败 [{category}]：{error}")
         return 2
-    print(f"测试通过\n请求地址：{result['endpoint']}\n模型：{result['model']}\n{result['message']}")
+    print(f"测试通过\n协议：{result['protocol']}\n请求地址：{result['endpoint']}\n模型：{result['model']}\n{result['message']}")
     return 0
 
 

@@ -16,6 +16,7 @@ data/
 id_ed25519*
 .superpowers/
 .sdd/
+.worktrees/
 evaluation/runs/
 evaluation/authorized-cases.json
 web/dist/

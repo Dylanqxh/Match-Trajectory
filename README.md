@@ -5,7 +5,7 @@
 ## 开始使用
 
 1. 已配置的 Windows 开发机可双击根目录 `Start-App.cmd`；Windows、macOS、Linux 的公开仓库用户建议使用下方 Docker Compose 入口。浏览器打开 `http://127.0.0.1:18765`。
-2. 点击左下角“模型连接”：可选 OpenAI／ChatGPT、Anthropic／Claude、DeepSeek、阿里云百炼，或填写 OpenAI 兼容中转站的 Base URL、模型 ID 与 Key。连接测试会区分 Key 无效、余额不足、限流、网络和超时，不回显 Key。勾选“记住 Key”只会尝试写入本机系统钥匙串；否则 Key 仅留在本次服务内存。
+2. 点击左下角“模型连接”：可选 OpenAI／ChatGPT、Anthropic／Claude、DeepSeek、阿里云百炼，或填写自定义中转站的 Base URL、接口协议、模型 ID 与 Key。自定义接口支持 Chat Completions 与 Responses；请按中转站文档显式选择。连接测试会区分 Key 无效、余额不足、限流、网络和超时，不回显 Key。勾选“记住 Key”只会尝试写入本机系统钥匙串；否则 Key 仅留在本次服务内存。
 3. 中间先明确简历方向，再上传旧简历或 JD（PDF、Word 的 .docx / .doc、TXT、Markdown；最大 8 MB，PDF 最多 12 页）。产品、后端、前端、测试、数据开发、算法／Agent、数据分析和运营会加载各自规则；其他方向明确使用通用规则。材料里已有的姓名、联系方式、学校、教育时间和经历不用重填；手工输入始终优先。扫描版 PDF 会请你改为粘贴。
 4. 生成仍走原来的分阶段流程。追问最多一轮、最多三个问题，回复「跳过」也会给出完整初稿。已有经历缺的细节标在那一条上；岗位差距只出现在旁边，不写进正文。
 5. 选择一份已保存简历或一个已有候选的生成任务，右侧“简历 Agent”会绑定到这个具体对象。可以说“把最长的一条压缩到一行”或“更突出本人负责的部分”。通过事实校验的修改会自动保存为新版本，并显示前后差异与一键撤销；没有原文依据的内容不会写入，用户可以直接继续澄清。左侧手工编辑与右侧 Agent 修改共享同一版本历史。
@@ -21,9 +21,11 @@
 ```powershell
 . .\scripts\Enter-DevEnvironment.ps1
 python tools\test_model_connection.py --base-url https://relay.example.com/v1 --model your-model-id
+# Responses 中转站：
+python tools\test_model_connection.py --base-url https://relay.example.com/v1 --model your-model-id --protocol responses
 ```
 
-macOS／Linux 在项目 Python 环境中使用同一命令，将路径分隔符改为 `/`。脚本仅测试 OpenAI 兼容的 Chat Completions 文本接口，并显示应用实际请求的端点与安全错误分类；它不测试 Responses API、图片、语音或完整简历质量。
+macOS／Linux 在项目 Python 环境中使用同一命令，将路径分隔符改为 `/`。脚本默认测试 Chat Completions；使用 `--protocol responses` 测试 Responses。两种模式都复用应用实际协议适配器，并显示实际请求端点与安全错误分类；脚本不测试图片、语音或完整简历质量。
 
 默认生成使用分阶段图流程，无需额外模型配置。可选试用：先在“模型连接 → 可选：智能修正策略”测试工具调用（额外1次合成请求，可能计费），再在“生成选项”启用智能修正。主管只在多项可修问题需要取舍时介入，所有调用计入原8次上限；不支持工具时继续使用默认生成。更换连接或重启后需要重新测试工具能力，不按模型名称推断支持。
 

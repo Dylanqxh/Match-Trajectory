@@ -76,3 +76,10 @@ def test_documented_direct_script_entrypoint_can_import_the_application():
     assert "Chat Completions" in result.stdout
     assert "Responses" in result.stdout
     assert "--protocol" in result.stdout
+
+
+def test_readme_documents_the_responses_diagnostic_mode():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "--protocol responses" in readme
+    assert "不测试 Responses API" not in readme

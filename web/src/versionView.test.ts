@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Content, Resume } from "./api";
-import { describeVersion } from "./versionHistory";
+import { describeVersion } from "./versionView";
 
 const content: Content = {
   name: "陈亦宁",

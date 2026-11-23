@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Resume } from "./api";
-import { describeVersion } from "./versionHistory";
+import { describeVersion } from "./versionView";
 
 function formatTime(value: string) {
   const date = new Date(value);

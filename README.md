@@ -38,6 +38,12 @@ docker compose logs -f       # 查看日志
 
 双击 `Start-App.cmd`，或运行 `.\scripts\Start-App.ps1`。
 
+已经有 `web/dist` 时，启动不会重新构建前端。拉到新界面后先显式重建；构建失败会停下来，不会继续打开旧页面：
+
+```powershell
+.\scripts\Start-App.ps1 -NoBrowser -RebuildFrontend
+```
+
 ## 怎么使用
 
 1. 在「模型连接」里选择供应商，或填写自定义中转的 Base URL、协议、模型 ID 和 Key。

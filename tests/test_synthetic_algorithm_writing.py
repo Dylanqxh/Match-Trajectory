@@ -79,7 +79,10 @@ def test_skipped_followups_do_not_excuse_dropping_strong_signals_or_filling_plac
     product = guide.joinpath("product.md").read_text(encoding="utf-8").split("改进写法", 1)[1]
     assert "研发排期" not in product and "18 条" in product
     operations = guide.joinpath("operations.md").read_text(encoding="utf-8").split("改进写法", 1)[1]
-    assert "阅读量" not in operations.split("不写", 1)[0] and "3 场" in operations
+    assert "3 场" in operations and "复购" in operations and "策略闭环" in operations
+    editorial = Path(__file__).resolve().parents[1].joinpath("skills/resume-writing/references/editorial.md").read_text(encoding="utf-8")
+    assert "不查学校" in editorial and "百分点差值" in editorial and "最多 2 个" in editorial
+    assert "负责业务" in editorial and "不是必填标签" in editorial
 
 
 def test_optional_header_fields_survive_only_when_the_user_fills_them(tmp_path):

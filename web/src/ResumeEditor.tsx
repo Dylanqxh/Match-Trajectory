@@ -2,6 +2,7 @@ import { Content } from "./api";
 import { EducationFields } from "./EducationFields";
 import { ExperienceFields } from "./ExperienceFields";
 import { EditorSectionKey, editorSectionCounts, editorSections, sectionKindsFor } from "./editorSections";
+import { scrollEditorContainer } from "./editorScroll";
 
 export interface ResumeEditorProps {
   content: Content;
@@ -25,7 +26,11 @@ export function ResumeEditor({ content, activeSection, disabled, onActiveSection
       {editorSections.map(section => <button type="button" key={section.key}
         className={activeSection === section.key ? "active" : ""}
         aria-current={activeSection === section.key ? "page" : undefined}
-        onClick={() => onActiveSectionChange(section.key)} disabled={disabled}>
+        onClick={event => {
+          onActiveSectionChange(section.key);
+          const panel = event.currentTarget.closest(".editor-panel");
+          if (panel instanceof HTMLElement) scrollEditorContainer(panel);
+        }} disabled={disabled}>
         <span>{section.label}</span><small>{counts[section.key]}</small>
       </button>)}
     </nav>

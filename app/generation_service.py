@@ -18,6 +18,35 @@ from app.skill import build_evidence, load_skill, validate_draft
 from app.store import Conflict, ResumeStore
 
 
+def collect_answer_context(job, answer: AnswerInput):
+    """Skip confirms nothing. A choice only points at evidence already on the job."""
+    if answer.skip:
+        return [], []
+    questions = {row["id"]: row for row in (job.get("plan") or {}).get("questions") or []}
+    known = {row["id"] for row in job.get("evidence") or []}
+    added, context = [], []
+    for key, option_id in answer.choices.items():
+        question = questions.get(key)
+        if question is None:
+            raise ValueError("回答包含不存在的问题")
+        option = next((item for item in question.get("options") or [] if item.get("id") == option_id), None)
+        if option is None:
+            raise ValueError("回答包含不存在的选项")
+        fact_ids = [fact_id for fact_id in option.get("fact_ids") or [] if fact_id in known]
+        context.append({"question": question.get("text", ""), "answer": f"篇幅偏好：{option.get('label', '')}",
+                        "fact_ids": fact_ids, "editorial": True})
+    for index, (key, text) in enumerate(answer.answers.items()):
+        if key not in questions:
+            raise ValueError("回答包含不存在的问题")
+        cleaned = text.strip()
+        if not cleaned:
+            continue
+        rows = [row.model_dump() for row in build_evidence(cleaned, prefix=f"a{index}-")]
+        added.extend(rows)
+        context.append({"question": questions[key].get("text", ""), "answer": cleaned, "fact_ids": [row["id"] for row in rows]})
+    return added, context
+
+
 def content_draft(content, evidence, source_map) -> ReviewDraft:
     refs = [e["id"] for e in evidence]
 
@@ -76,14 +105,9 @@ class GenerationService:
                 return
             if job["state"] != "waiting_input" or job["question_group"] != answer.question_group:
                 raise Conflict("这组问题已处理或任务状态已变化，请刷新")
-            questions = {q["id"]: q["text"] for q in job["plan"]["questions"]}
-            if any(key not in questions for key in answer.answers):
-                raise ValueError("回答包含不存在的问题")
-            job["answer_context"] = []
-            for index, (key, text) in enumerate(answer.answers.items()):
-                evidence = build_evidence(text, prefix=f"a{index}-")
-                job["evidence"].extend(e.model_dump() for e in evidence)
-                job["answer_context"].append({"question": questions[key], "answer": text, "fact_ids": [e.id for e in evidence]})
+            added, context = collect_answer_context(job, answer)
+            job["evidence"].extend(added)
+            job["answer_context"] = context
             job.update(state="queued", stage="draft", answered=True, error="",
                        answer_submission={"group": answer.question_group, "hash": digest})
 

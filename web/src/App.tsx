@@ -310,7 +310,7 @@ export default function App() {
   }
   const selectedJob = jobId ? jobs.find(row => row.id === jobId) : undefined;
   const agentTarget = activeAgentTarget(selectedJob, record, list, dirty);
-  return <div className="app-shell">
+  return <div className={`app-shell${record ? " workbench-open" : ""}`}>
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={interactionLocked} onClick={() => {

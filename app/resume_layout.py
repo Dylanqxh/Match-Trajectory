@@ -137,6 +137,24 @@ def _strength_sort(rows, jd: str):
     return [row for _, row in indexed]
 
 
+def work_is_substantive(rows) -> bool:
+    """A real internship or job keeps its place. A title-only stub does not."""
+    texts = []
+    for row in rows:
+        items = row.get("items") if isinstance(row, dict) else row.items
+        for item in items or []:
+            texts.append((item.get("text") if isinstance(item, dict) else item.text) or "")
+    compact = re.sub(r"\s+", "", "".join(texts))
+    return len(compact) >= 24
+
+
+def skeleton_kinds(sections) -> tuple[str, ...]:
+    work = [row for row in sections if presentation_kind(row) == "work"]
+    if work_is_substantive(work):
+        return ("work", "project", "skills", "campus")
+    return ("project", "skills", "work", "campus")
+
+
 def arrange_draft_sections(sections: list[dict], jd: str = "") -> list[dict]:
     """Normalize kinds and put stronger projects and jobs ahead of a later weak one."""
     normalized = []
@@ -148,7 +166,7 @@ def arrange_draft_sections(sections: list[dict], jd: str = "") -> list[dict]:
     for row in normalized:
         grouped[row["kind"] if row["kind"] in CANONICAL_KINDS else "rest"].append(row)
     ordered = []
-    for kind in CANONICAL_KINDS:
+    for kind in skeleton_kinds(normalized):
         rows = grouped[kind]
         if kind in ("project", "work"):
             rows = _strength_sort(rows, jd)
@@ -167,22 +185,25 @@ def ordered_sections(sections):
             buckets[kind].append(section)
         else:
             rest.append(section)
-    return [*buckets["skills"], *buckets["project"], *buckets["work"], *buckets["campus"], *rest]
+    return [*(section for kind in skeleton_kinds(sections) for section in buckets[kind]), *rest]
 
 
 def grouped_blocks(sections):
     """Visible blocks only. An empty block is omitted for every reader."""
     buckets = {kind: [] for kind in ("education", *CANONICAL_KINDS)}
     legacy = []
+    visible = []
     for section in sections:
         if not section.items:
             continue
+        visible.append(section)
         kind = presentation_kind(section)
         if kind in buckets:
             buckets[kind].append(section)
         else:
             legacy.append(section)
-    blocks = [(BLOCK_LABELS[kind], buckets[kind]) for kind in ("education", *CANONICAL_KINDS) if buckets[kind]]
+    order = ("education", *skeleton_kinds(visible))
+    blocks = [(BLOCK_LABELS[kind], buckets[kind]) for kind in order if buckets[kind]]
     blocks.extend((section.title, [section]) for section in legacy)
     return blocks
 

@@ -34,7 +34,13 @@ def format_examples(stage, context):
     ref = evidence[0]["id"]
     if stage == "plan":
         return [{"decision": "draft", "selected_fact_ids": [ref], "focus": [], "questions": [], "gaps": []},
-                {"decision": "ask", "selected_fact_ids": [ref], "questions": [{"id": "q1", "text": "你本人已经交付了什么？"}], "focus": [], "gaps": []}]
+                {"decision": "ask", "selected_fact_ids": [ref], "focus": [], "gaps": [], "questions": [{
+                    "id": "q1", "kind": "choice", "text": "已有材料里，这版更想先让读者看到哪一段？",
+                    "options": [
+                        {"id": "keep", "label": "先突出这段材料里已经写明的交付", "recommended": True, "fact_ids": [ref]},
+                        {"id": "other", "label": "先按材料中另一段已有经历排序", "recommended": False, "fact_ids": [ref]},
+                    ],
+                }]}]
     if stage in ("draft", "revise"):
         return [{"summary": None, "education": [], "sections": [{"id": "section_1", "title": "<原文项目的名称或任务用途>",
             "kind": "project", "start_date": "", "end_date": "", "organization": "", "role": "", "fact_ids": [ref], "items": [
@@ -162,6 +168,8 @@ class ModelClient:
                   + "\n所有正文条目 id 全局唯一；每个段落必须用真实 evidence.id 引用，不得逐板块重复 item1。"
                   + "\n若有 validation_feedback，请只纠正格式和引用，仍须保留事实边界。"
                   + "\nsections.kind 只能是 skills（专业技能）、project（项目）、work（工作 / 实习经历）、campus（校园与荣誉）。"
+                  + "有实质实习或工作时，顺序是 work、project、skills、campus；实习几乎没有正文时，project 和 skills 可以更靠前。空块不要输出。"
+                  + "plan 若发问，最多 3 题、只一轮。优先 kind=choice：2 到 4 个选项，恰好一个 recommended，每个选项的 fact_ids 必须是已有 evidence.id，不能写证据里没有的数字、岗位或熟练度。选项只确认已有事实或调整篇幅顺序。跳过不是事实确认。\n"
                   + "教育放 education 字段，不要另开板块。没有材料的块不要输出，也不要为空块写缺口标记。"
                   + "竞赛和奖项放 campus。负面或无关事实可以省略，不得改成更强的状态、范围或规模。"
                   + "同一段经历内的日期必须一致。原文中的获奖、获评和数量结果必须写进正文。\n"

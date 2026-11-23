@@ -26,7 +26,7 @@ export interface GenerationJob extends GenerationSummary {
   service_warning?: string;
   input: { target_role: string; career_stage?: string; has_career_gap?: boolean }; calls: number; revisions: number; error: string; framework: boolean; question_group: string;
   skill?: { role: string; version: string; resources?: string[]; stage_resources?: Record<string, string[]> };
-  plan: { questions: { id: string; text: string }[]; gaps: string[] } | null;
+  plan: { questions: { id: string; text: string; kind?: "choice" | "note"; options?: { id: string; label: string; recommended?: boolean; fact_ids?: string[] }[] }[]; gaps: string[] } | null;
   coverage_notes?: string[];
   draft: { summary: { text: string } | null; education?: Education[]; sections: Section[] } | null;
   evidence: { id: string; text: string }[]; issues: GenerationIssue[]; review: { verdict: string; quality?: WritingQuality | null } | null;

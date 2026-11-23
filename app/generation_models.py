@@ -18,9 +18,31 @@ class Evidence(StrictModel):
     end: int = Field(gt=0)
 
 
+class QuestionOption(StrictModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    label: str = Field(min_length=1, max_length=160)
+    recommended: bool = False
+    fact_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
 class Question(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
     text: str = Field(min_length=1, max_length=300)
+    kind: Literal["choice", "note"] = "note"
+    options: list[QuestionOption] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def check_options(self):
+        if self.kind == "choice":
+            if not 2 <= len(self.options) <= 4:
+                raise ValueError("选择题需要 2 到 4 个已有事实选项")
+            if sum(option.recommended for option in self.options) != 1:
+                raise ValueError("选择题必须且只能有一个推荐项")
+            if len({option.id for option in self.options}) != len(self.options):
+                raise ValueError("选项标识重复")
+        elif self.options:
+            raise ValueError("开放补充不能带选项")
+        return self
 
 
 class Plan(StrictModel):
@@ -216,13 +238,14 @@ class GenerationInput(StrictModel):
 class AnswerInput(StrictModel):
     question_group: str = Field(min_length=1, max_length=80)
     answers: dict[str, str] = Field(default_factory=dict, max_length=3)
+    choices: dict[str, str] = Field(default_factory=dict, max_length=3)
     skip: bool = False
 
     @model_validator(mode="after")
     def bound_answers(self):
         if sum(map(len, self.answers.values())) > 4000:
             raise ValueError("补充回答最多 4,000 字")
-        if self.skip and self.answers:
+        if self.skip and (self.answers or self.choices):
             raise ValueError("跳过时不能提交回答")
         return self
 

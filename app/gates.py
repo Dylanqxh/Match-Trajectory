@@ -24,7 +24,9 @@ MONTH_RANGE = re.compile(
 ITEM_PERIOD = re.compile(
     r"((?:19|20|21)\d{2})[.\-/](\d{1,2})\s*[—\-~到至]+\s*((?:19|20|21)\d{2})[.\-/](\d{1,2})")
 AWARD_WORD = re.compile(r"铜奖|银奖|金奖|一等奖|二等奖|三等奖|奖学金|ACM")
-STRONG_MARKERS = ("优秀", "铜奖", "银奖", "金奖", "一等奖", "二等奖", "三等奖", "奖学金")
+STRONG_MARKERS = ("优秀", "铜奖", "银奖", "金奖", "一等奖", "二等奖", "三等奖", "奖学金", "第二作者")
+PLACEHOLDER = re.compile(r"x{2,}|X{2,}|×{2,}")
+PRESTIGE = ("985", "211", "双一流")
 NEGATIVE_PHRASES = ("已下线", "未正式推广", "未推广", "其他组员", "试运行结束后", "没有上线", "未上线", "而停止")
 NEGATIVE_CLAUSE = re.compile(
     r"未正式推广|尚未推广|没有正式推广|没正式推广|未推广|"
@@ -302,6 +304,25 @@ def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
         item["highlights"] = [phrase for phrase in item.get("highlights") or [] if phrase and phrase in item["text"]]
         placed += 1
     return notes
+
+
+def ungrounded_choice(plan, evidence) -> str:
+    """Choice labels may point at existing evidence. They may not invent numbers or proficiency."""
+    known = {row.get("id"): row.get("text") or "" for row in evidence if isinstance(row, dict)}
+    for question in getattr(plan, "questions", []) or []:
+        if getattr(question, "kind", "note") != "choice":
+            continue
+        for option in question.options:
+            if not option.fact_ids or any(fact_id not in known for fact_id in option.fact_ids):
+                return "选择题的每个选项都要引用已经存在的证据"
+            cited = "\n".join(known[fact_id] for fact_id in option.fact_ids)
+            for number in re.findall(r"\d+(?:\.\d+)?", option.label):
+                if number not in cited:
+                    return "选择题不能写出证据里没有的数字"
+            for word in ("精通", "熟练", "掌握", "熟悉"):
+                if word in option.label and word not in cited:
+                    return "选择题不能提高原文没有写出的熟练度"
+    return ""
 
 
 def _skipped_followups(job: dict) -> list[str]:
@@ -729,6 +750,22 @@ def gate_warnings(job: dict, draft) -> list[Issue]:
     missing_markers = [marker for marker in STRONG_MARKERS if marker in source and marker not in blob]
     if missing_markers:
         _warn(issues, "document", f"原文有强结果（{'、'.join(missing_markers)}），正文必须保留，不能因为压缩或跳过追问删掉。")
+    team_rank = re.search(r"团队第\s*(\d+)\s*名", source)
+    if team_rank and team_rank.group(0).replace(" ", "") not in blob.replace(" ", ""):
+        _warn(issues, "document", "原文写了团队名次。正文要保留团队名次，不能改成个人排名。")
+    corpus = source + "\n" + "\n".join(
+        " ".join(str(row.get(key) or "") for key in ("school", "degree", "major"))
+        for row in (job.get("input") or {}).get("education") or [] if isinstance(row, dict))
+    for token in PRESTIGE:
+        if token in blob and token not in corpus:
+            issues.append(_issue("document", "blocking", "unsupported", f"材料没有「{token}」，不能凭学校名气补写。"))
+    if PLACEHOLDER.search(blob):
+        issues.append(_issue("document", "blocking", "unsupported", "正文还留着未填写的占位符。删掉它，不要用想象的技术栈填上。"))
+    for section in draft.sections:
+        role = section.role or ""
+        if "实习生" in source and re.search(r"工程师|负责人", role) and "实习" not in role:
+            _warn(issues, section.id, "原文岗位是实习。不要把岗位名称升级成工程师或负责人。")
+            break
     group = re.search(r"(\d+)\s*组中\s*(\d+)\s*组", source)
     if group and (group.group(1) not in blob or group.group(2) not in blob):
         _warn(issues, "document", "原文有「几组中几组」这类结果，正文要用同样的数字写上。")

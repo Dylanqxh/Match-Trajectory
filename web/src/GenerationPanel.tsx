@@ -18,6 +18,31 @@ function resumeDate(value?: string) {
   return (value || "").replace(/((?:19|20|21)\d{2})-(0[1-9]|1[0-2])/g, "$1.$2");
 }
 
+export function FollowupQuestions({ questions, choices, notes, busy, onChoice, onNote, onSubmit, onSkip }: {
+  questions: { id: string; text: string; kind?: "choice" | "note"; options?: { id: string; label: string; recommended?: boolean }[] }[];
+  choices: Record<string, string>; notes: Record<string, string>; busy: boolean;
+  onChoice: (questionId: string, optionId: string) => void; onNote: (questionId: string, value: string) => void;
+  onSubmit: () => void; onSkip: () => void;
+}) {
+  return <div className="questions"><p>最多再问这一轮。选项都来自已有材料，推荐只表示先写哪一段。可以不选，跳过也不会被当成事实确认。</p>
+    {questions.map(question => {
+      const options = question.kind === "choice" ? question.options || [] : [];
+      return <fieldset key={question.id} className="followup-question">
+        <legend>{question.text}</legend>
+        {options.length > 0 ? options.map(option => <label className="checkbox-label" key={option.id}>
+          <input type="radio" name={`followup-${question.id}`} checked={choices[question.id] === option.id}
+            onChange={() => onChoice(question.id, option.id)}/>
+          <span>{option.label}{option.recommended ? "（推荐）" : ""}</span>
+        </label>) : <textarea aria-label={question.text} rows={2} maxLength={4000} value={notes[question.id] || ""}
+          onChange={event => onNote(question.id, event.target.value)}/>}
+        {options.length > 0 && <label>补充一句，可选<input value={notes[question.id] || ""} maxLength={300}
+          onChange={event => onNote(question.id, event.target.value)} placeholder="不写也可以"/></label>}
+      </fieldset>;
+    })}
+    <div className="button-row"><button className="primary" type="button" disabled={busy} onClick={onSubmit}>提交并继续</button>
+      <button className="secondary" type="button" disabled={busy} onClick={onSkip}>跳过，先看初稿</button></div></div>;
+}
+
 export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinished }: {
   jobId: string; onClose: () => void; onAdopt: (row: Resume) => void; beforeAdopt: () => boolean;
   onFinished: (job: GenerationJob) => void;
@@ -26,12 +51,13 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [choices, setChoices] = useState<Record<string, string>>({});
   const [refresh, setRefresh] = useState(0);
   const callbacks = useRef({ onFinished }); callbacks.current = { onFinished };
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
-    setJob(null); setError(""); setAnswers({});
+    setJob(null); setError(""); setAnswers({}); setChoices({});
     async function poll() {
       try {
         const row = await api<GenerationJob>(`/api/generation-jobs/${jobId}`);
@@ -67,11 +93,12 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       {job.stop_reason && !failure && <p className="notice">{job.stop_reason}</p>}
       {job.service_warning && <p className="notice">{job.service_warning}</p>}
       {job.framework && <p>目前只有目标岗位，还没有可以写进简历的经历。可以先进入编辑器自己写，或补充一段真实材料后再生成。</p>}
-      {job.state === "waiting_input" && <div className="questions"><p>最多再问这一轮。可以直接回答，也可以跳过，先看完整初稿。</p>
-        {job.plan?.questions.map(question => <label key={question.id}>{question.text}<textarea aria-label={question.text} rows={2} maxLength={4000}
-          value={answers[question.id] || ""} onChange={e => setAnswers({ ...answers, [question.id]: e.target.value })}/></label>)}
-        <div className="button-row"><button className="primary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers, skip: false }))}>提交并继续</button>
-          <button className="secondary" disabled={busy} onClick={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, skip: true }))}>跳过，先看初稿</button></div></div>}
+      {job.state === "waiting_input" && job.plan?.questions && <FollowupQuestions questions={job.plan.questions}
+        choices={choices} notes={answers} busy={busy}
+        onChoice={(questionId, optionId) => setChoices(current => ({ ...current, [questionId]: optionId }))}
+        onNote={(questionId, value) => setAnswers(current => ({ ...current, [questionId]: value }))}
+        onSubmit={() => void act(() => command("answer", { question_group: job.question_group, answers, choices, skip: false }))}
+        onSkip={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, choices: {}, skip: true }))}/>}
       {gaps.length > 0 && <div className="gap-notes"><h3>这些先别写进简历</h3><p>材料里还没写清的地方，只放在这里提醒你。不会自动补进正文。</p>
         {gaps.map(note => <p key={note}>{note}</p>)}</div>}
       {job.draft && <div className="candidate-content">

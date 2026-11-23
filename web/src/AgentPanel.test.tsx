@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentPanel, AgentProposalCard, sameAgentTarget } from "./AgentPanel";
-import { activeAgentTarget } from "./App";
+import { activeAgentTarget, preferredAgentCollapsed } from "./App";
 import { AgentProposal } from "./api";
 
 const proposal: AgentProposal = {
@@ -95,5 +95,22 @@ describe("AgentPanel", () => {
     );
 
     expect(target).toEqual({ type: "resume", id: "resume-1", label: "林然", revision: 4 });
+  });
+
+  it("collapses to a strip when no resume is open, and expands once one exists", () => {
+    expect(preferredAgentCollapsed(false, null)).toBe(true);
+    expect(preferredAgentCollapsed(true, null)).toBe(false);
+    expect(preferredAgentCollapsed(true, true)).toBe(true);
+
+    const collapsed = renderToStaticMarkup(<AgentPanel target={null} collapsed modelReady={false}
+      onOpenSettings={() => undefined} onApplied={() => undefined} onToggle={() => undefined}/>);
+    expect(collapsed).toContain("未选择目标");
+    expect(collapsed).toContain("简历 Agent");
+    expect(collapsed).not.toContain("告诉 Agent 想怎么改");
+    expect(collapsed).not.toContain("上传简历");
+
+    const expanded = renderToStaticMarkup(<AgentPanel target={null} collapsed={false} modelReady={true}
+      onOpenSettings={() => undefined} onApplied={() => undefined}/>);
+    expect(expanded).toContain("先选择一份简历或生成任务");
   });
 });

@@ -11,9 +11,15 @@ import { RoleDirectionPicker } from "./RoleDirectionPicker";
 import { RoleDirection } from "./roleDirections";
 import { ResumeEditor } from "./ResumeEditor";
 import { EditorSectionKey } from "./editorSections";
+import { VersionHistory } from "./VersionHistory";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
+
+export function preferredAgentCollapsed(hasResume: boolean, pinnedCollapsed: boolean | null): boolean {
+  if (pinnedCollapsed !== null) return pinnedCollapsed;
+  return !hasResume;
+}
 
 export function activeAgentTarget(selectedJob: GenerationSummary | undefined, record: Resume | null,
   resumes: Summary[], dirty: boolean): AgentTarget | null {
@@ -67,6 +73,9 @@ export default function App() {
   const [preview, setPreview] = useState("");
   const [editorSection, setEditorSection] = useState<EditorSectionKey>("basics");
   const [scale, setScale] = useState(0.8);
+  const [agentCollapsed, setAgentCollapsed] = useState(true);
+  const agentPinned = useRef<boolean | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const previewBox = useRef<HTMLDivElement>(null);
   const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd, careerStage, careerGap });
   const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim()
@@ -127,6 +136,22 @@ export default function App() {
     function guard(event: BeforeUnloadEvent) { if (hasUnsavedChanges) event.preventDefault(); }
     window.addEventListener("beforeunload", guard); return () => window.removeEventListener("beforeunload", guard);
   }, [hasUnsavedChanges]);
+  useEffect(() => {
+    setAgentCollapsed(preferredAgentCollapsed(Boolean(record), agentPinned.current));
+  }, [record]);
+  useEffect(() => {
+    setReviewOpen(Boolean(record?.ai?.issues.some(unresolvedBlocking)));
+  }, [record?.id, record?.revision]);
+
+  function toggleAgent() {
+    setAgentCollapsed(current => {
+      const next = !current;
+      agentPinned.current = next;
+      return next;
+    });
+  }
+  const hasMaterials = Boolean(source.trim() || jd.trim());
+  const createStep = !roleDirection ? 1 : hasMaterials ? 3 : 2;
 
   function edit(next: Content) { if (deletionInFlight.current) return; setContent(next); setDirty(true); setStatus("有未保存的修改"); }
   function canSwitch() { return !deletionInFlight.current && (!hasUnsavedChanges || window.confirm("当前修改尚未保存，确定切换？")); }
@@ -303,56 +328,66 @@ export default function App() {
         <span className="stage-chip">证据驱动 · 版本可回退</span></header>
       <div className="feedback" role="status">{interactionLocked ? "正在处理，请稍候…" : status}</div>
       {error && <div className="error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
-      {!modelStatus.startsWith("已连接") && <div className="setup-banner">
-        <div><strong>先连接模型，再生成简历</strong><p>选择供应商，打开官方页面复制 Key，粘贴并测试。失败时会说明下一步，不会显示 Key。不配置也可以先看虚构示例。</p></div>
-        <button className="primary" type="button" onClick={() => setSettings(true)}>配置 Key</button>
-      </div>}
+      {!modelStatus.startsWith("已连接") && !record && <section className="empty-state" aria-label="模型尚未连接">
+        <span className="empty-mark" aria-hidden="true">○</span>
+        <div><strong>模型尚未连接</strong><p>不连接也可以先看虚构示例，或手工编辑、保存和导出。要生成简历或让 Agent 修改，再选择供应商并测试 Key。</p></div>
+        <button className="primary" type="button" onClick={() => setSettings(true)}>配置模型</button>
+      </section>}
+      {!modelStatus.startsWith("已连接") && record && <p className="model-chip">模型未连接，编辑和导出仍可用。<button type="button" className="text-button" onClick={() => setSettings(true)}>去连接</button></p>}
       <div className="canvas">
       {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
         onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
       {!record ? <section className="start-layout">
-        <div className="welcome"><span className="eyebrow">从已有材料开始</span><h2>先放入简历，<br/>缺的再补一句。</h2>
-          <p>上传旧简历或 JD 就能生成。材料里已经有的姓名、联系方式、学校和经历不用重填；你手改过的以你填的为准。</p>
-          <ol className="flow-steps"><li className={roleDirection ? "done" : "active"}><span>1</span>选方向</li><li className={roleDirection ? "active" : ""}><span>2</span>放材料</li><li><span>3</span>生成核对</li><li><span>4</span>编辑导出</li></ol>
+        <div className="welcome"><span className="eyebrow">还没有打开简历</span><h2>选择方向，放入材料，确认后生成。</h2>
+          <p>主路径只有三步。姓名和联系方式单独留在本机；补充信息、求职背景和生成选项放在下面，不挡住这一步。</p>
+          <ol className="flow-steps"><li className={createStep === 1 ? "active" : "done"}><span>1</span>选择方向</li><li className={createStep === 2 ? "active" : createStep > 2 ? "done" : ""}><span>2</span>放入材料</li><li className={createStep === 3 ? "active" : ""}><span>3</span>确认并生成</li></ol>
           <button className="secondary" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => {
             adopt(await api<Resume>("/api/demo", {})); await refreshList();
           }); }}>先用虚构示例体验 →</button>
         </div>
-        <form className="material-card" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
-          <div className="material-card-head"><div><span className="eyebrow">新建简历</span><h3>确定方向，再放入材料</h3></div><span className="privacy-badge">仅在本机整理</span></div>
-          <section className="flow-section"><span className="step-label">步骤 1 · 求职方向</span>
-            <RoleDirectionPicker value={roleDirection} onChange={setRoleDirection}/>
-            <label className="target-role-field">目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如：推荐算法工程师（可稍后补）"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+        <form onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
+          <section className="identity-strip" aria-label="姓名与联系方式">
+            <p>姓名和联系方式保存在本机，单独填写，不会埋进补充信息。</p>
+            <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="可留空，沿用材料中的姓名"/></label>
+            <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="可留空，沿用材料中的手机或邮箱"/></label>
           </section>
-          <section className="flow-section"><span className="step-label">步骤 2 · 真实材料</span>
-            <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
-            {recognized && <p className="notice material-recognized">{recognized}</p>}
-            {(source.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料"><span>{source.trim() ? `简历材料 ${source.trim().length.toLocaleString()} 字` : "尚未添加简历"}</span><span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span></div>}
+          <div className="material-card">
+            <div className="material-card-head"><div><span className="eyebrow">新建简历</span><h3>确定方向，再放入材料</h3></div><span className="privacy-badge">仅在本机整理</span></div>
+            <section className="flow-section"><span className="step-label">步骤 1 · 求职方向</span>
+              <RoleDirectionPicker value={roleDirection} onChange={setRoleDirection}/>
+              <label className="target-role-field">目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如：推荐算法工程师（可稍后补）"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
+            </section>
+            <section className="flow-section"><span className="step-label">步骤 2 · 放入材料</span>
+              <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
+              <label>或直接粘贴经历<textarea aria-label="现有材料" rows={6} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="不上传也可以把经历粘贴在这里。上传后的文字会出现在这里，可再改。"/></label>
+              <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
+              <label>岗位 JD（可选）<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)} placeholder="没有具体岗位可以留空"/></label>
+              {recognized && <p className="notice material-recognized">{recognized}</p>}
+              {(source.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料"><span>{source.trim() ? `简历材料 ${source.trim().length.toLocaleString()} 字` : "尚未添加简历"}</span><span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span></div>}
+            </section>
+            <section className="flow-section consent-section"><span className="step-label">步骤 3 · 确认并生成</span>
+              <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
+              <button className="primary full generate-button" type="submit" disabled={!roleDirection}>{roleDirection ? "开始生成并核对事实" : "请先选择求职方向"}</button>
+            </section>
+          </div>
+          <section className="secondary-panel" aria-label="补充信息">
+            <p>下面三项都不影响主路径，需要时再打开。</p>
+            <details><summary>补充信息</summary>
+              <EducationFields rows={content.education || []} onChange={education => setContent({ ...content, education })}/>
+            </details>
+            <details><summary>求职背景</summary>
+              <label>求职阶段<select aria-label="求职阶段" value={careerStage} onChange={e => setCareerStage(e.target.value)}><option value="unspecified">不确定／通用</option><option value="entry">校招／初次求职</option><option value="experienced">社招／已有经验</option><option value="transition">转岗</option></select></label>
+              <label className="checkbox-label"><input type="checkbox" checked={careerGap} onChange={e => setCareerGap(e.target.checked)}/>有职业空窗（可选，不必说明私人原因）</label>
+            </details>
+            <details><summary>生成选项</summary>
+              <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
+              <label className="checkbox-label"><input type="checkbox" checked={useSupervisor} onChange={e => setUseSupervisor(e.target.checked)}/>启用智能修正策略（试用）</label>
+              <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
+            </details>
+            <button className="text-button" type="button" onClick={() => void action(async () => {
+              adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
+            })}>先不生成，进入编辑器 →</button>
           </section>
-          <section className="flow-section consent-section"><span className="step-label">步骤 3 · 确认并生成</span>
-            <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
-            <button className="primary full generate-button" type="submit" disabled={!roleDirection}>{roleDirection ? "开始生成并核对事实" : "请先选择求职方向"}</button>
-          </section>
-          <details className="optional-fields"><summary>补充信息与高级选项</summary>
-          <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="留空则使用材料中的姓名"/></label>
-          <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="留空则使用材料中的手机或邮箱"/></label>
-          <details><summary>求职背景（可选，用于调整写法）</summary>
-            <label>求职阶段<select aria-label="求职阶段" value={careerStage} onChange={e => setCareerStage(e.target.value)}><option value="unspecified">不确定／通用</option><option value="entry">校招／初次求职</option><option value="experienced">社招／已有经验</option><option value="transition">转岗</option></select></label>
-            <label className="checkbox-label"><input type="checkbox" checked={careerGap} onChange={e => setCareerGap(e.target.checked)}/>有职业空窗（可选，不必说明私人原因）</label>
-          </details>
-          <EducationFields rows={content.education || []} onChange={education => setContent({ ...content, education })}/>
-          <label>现有材料<textarea aria-label="现有材料" rows={7} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="不上传也可以把经历粘贴在这里。上传后的文字会出现在这里，可再改。"/></label>
-          <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
-          <details><summary>有具体岗位 JD？可选填写</summary><label>岗位 JD<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)}/></label></details>
-          <label className="checkbox-label"><input type="checkbox" checked={allowQuestions} onChange={e => setAllowQuestions(e.target.checked)}/>允许最多一轮补问（可跳过）</label>
-          <details><summary>生成选项</summary>
-            <label className="checkbox-label"><input type="checkbox" checked={useSupervisor} onChange={e => setUseSupervisor(e.target.checked)}/>启用智能修正策略（试用）</label>
-            <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
-          </details>
-          </details>
-          <button className="text-button full" type="button" onClick={() => void action(async () => {
-            adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
-          })}>进入编辑器 →</button>
         </fieldset></form>
       </section> : <>
         <div className={`document-banner ${record.origin === "demo" ? "demo-banner" : ""}`}>
@@ -365,24 +400,35 @@ export default function App() {
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
         </section>
-        <section className="preview-panel"><div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
-          <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin allow-scripts" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
-          <div className="export-panel"><strong>下载当前版本</strong><p>点击后会先保存左侧修改，再直接生成文件；审阅提示不会阻止下载。</p>
-            {record.ai && <div className="ai-review-box"><p data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</p>
-              <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
-              {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
-                {issue.resolution?.explanation && <p>核对说明：{issue.resolution.explanation}</p>}
-                {unresolvedBlocking(issue) && <button className="text-button" disabled={interactionLocked} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}
-              <button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
-              <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>自行核对并接管</button></div>}
-            <div className="button-row"><button className="primary" disabled={interactionLocked} onClick={() => void download("pdf")}>下载 PDF</button><button className="secondary" disabled={interactionLocked} onClick={() => void download("docx")}>下载 Word</button></div>
-            <p className="fine">Word 中的字体与分页可能不同；PDF 更适合固定排版。</p>
+        <section className="preview-panel">
+          <div className="preview-actions">
+            <div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
+            <div className="export-actions" aria-label="导出当前版本">
+              <button className="primary" disabled={interactionLocked} onClick={() => void download("pdf")}>下载 PDF</button>
+              <button className="secondary" disabled={interactionLocked} onClick={() => void download("docx")}>下载 Word</button>
+            </div>
+            <p className="fine preview-export-note">导出前会先保存左侧修改。审阅提示不会阻止下载。</p>
           </div>
+          <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin allow-scripts" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
         </section></div>
+        {record.ai && <details className="review-summary" open={reviewOpen} onToggle={event => {
+          if (event.target !== event.currentTarget) return;
+          setReviewOpen(event.currentTarget.open);
+        }}>
+          <summary><span>审阅状态</span><strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</strong></summary>
+          <div className="review-summary-body">
+            <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
+            {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
+              {issue.resolution?.explanation && <p>核对说明：{issue.resolution.explanation}</p>}
+              {unresolvedBlocking(issue) && <button className="text-button" disabled={interactionLocked} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}
+            <div className="button-row"><button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
+              <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>自行核对并接管</button></div>
+          </div>
+        </details>}
       </>}
       </div>
     </main>
-    <AgentPanel target={agentTarget} modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onApplied={row => {
+    <AgentPanel target={agentTarget} collapsed={agentCollapsed} onToggle={toggleAgent} modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onApplied={row => {
       adopt(row); showJob(null); void refreshList(); void refreshJobs(); setStatus(`Agent 修改已自动保存为版本 ${row.revision}，需要时可在对话中撤销`);
     }}/>
     {settings && <ModelSettings onClose={() => setSettings(false)} onSaved={() => void refreshModel()}/>}
@@ -392,6 +438,6 @@ export default function App() {
       if (index >= 0) { setResolution({ record: row, issueIndex: index }); setStatus("人工核对已保存，请继续处理下一项问题"); }
       else { setResolution(null); void action(() => confirmTakeover(row)); }
     }}/>}
-    {history && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="版本记录"><button className="close" onClick={() => setHistory(null)} aria-label="关闭版本记录">×</button><h2>版本记录</h2><p>已保存版本保持不变，当前共 {history.length} 个版本。</p>{history.map(row => <div className="history-row" key={row.revision}><strong>v{row.revision} · {row.content.name || "未命名"}</strong><small>{new Date(row.updated_at).toLocaleString()}</small><p>{row.content.sections[0]?.items[0]?.text || "空白草稿"}</p></div>)}</section></div>}
+    {history && <VersionHistory rows={history} onClose={() => setHistory(null)}/>}
   </div>;
 }

@@ -23,8 +23,9 @@ export function AgentProposalCard({ proposal }: { proposal: AgentProposal }) {
   </section>;
 }
 
-export function AgentPanel({ target, modelReady, onOpenSettings, onApplied }: {
+export function AgentPanel({ target, modelReady, onOpenSettings, onApplied, collapsed = false, onToggle }: {
   target: AgentTarget | null; modelReady: boolean; onOpenSettings: () => void; onApplied: (row: Resume) => void;
+  collapsed?: boolean; onToggle?: () => void;
 }) {
   const [session, setSession] = useState<AgentSession | null>(null);
   const [text, setText] = useState("");
@@ -73,11 +74,19 @@ export function AgentPanel({ target, modelReady, onOpenSettings, onApplied }: {
   const locked = busy || !session || !modelReady || Boolean(target?.blockedReason);
   const suggestions = ["把最长的一条压缩到一行", "更突出我本人负责的部分", "按目标岗位调整经历顺序"];
 
-  return <aside className="agent-rail" aria-label="简历 Agent">
+  return <aside className={`agent-rail${collapsed ? " collapsed" : ""}`} aria-label="简历 Agent">
+    {collapsed ? <button type="button" className="agent-strip" aria-expanded={false} aria-label={target ? "展开简历 Agent" : "简历 Agent，未选择目标"} onClick={onToggle}>
+      <span className="agent-mark" aria-hidden="true">AI</span>
+      <span className="agent-strip-label">简历</span>
+      <small>{target ? "展开" : "未选择"}</small>
+    </button> : <>
     <header className="agent-head">
       <div className="agent-mark">AI</div>
       <div><strong>简历 Agent</strong><small>自动保存 · 随时撤销</small></div>
-      <span className={`agent-status ${busy ? "running" : ""}`}>{busy ? "正在思考" : "本地会话"}</span>
+      <div className="agent-head-actions">
+        <span className={`agent-status ${busy ? "running" : ""}`}>{busy ? "正在思考" : "本地会话"}</span>
+        {onToggle && <button type="button" className="agent-collapse" aria-label="收起简历 Agent" onClick={onToggle}>收起</button>}
+      </div>
     </header>
     {!target ? <div className="agent-empty"><span>✦</span><strong>先选择一份简历或生成任务</strong><p>Agent 会绑定当前对象，读取它的版本和原文依据，再为你提出可核对的修改。</p></div> : <>
       <div className="agent-context"><span>{target.type === "resume" ? "正在修改" : "正在讨论"}</span><strong>{target.label}</strong>
@@ -98,6 +107,7 @@ export function AgentPanel({ target, modelReady, onOpenSettings, onApplied }: {
           onChange={event => setText(event.target.value)} placeholder="例如：把项目第二条写得更简洁，但保留原文中的数字结果"/>
         <div><small>通过事实校验后自动保存；新增事实仍需原文依据。</small><button className="primary" type="submit" disabled={locked || !text.trim()}>发送并修改</button></div>
       </form>
+    </>}
     </>}
   </aside>;
 }

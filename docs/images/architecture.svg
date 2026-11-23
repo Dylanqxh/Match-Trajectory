@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="748" viewBox="0 0 960 748" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Match-Trajectory 架构</title>
+  <desc id="arch-desc">简历工作台连接本地 API，再进入材料、生成和 Agent，经过 Skill 与事实门禁后调用官方或自定义中转模型，结果写入 SQLite 并导出。</desc>
+  <rect width="960" height="748" rx="28" fill="#f3f1ea"/>
+  <text x="48" y="48" fill="#173b31" font-family="Segoe UI, PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="22" font-weight="700">从工作台到导出</text>
+  <text x="48" y="74" fill="#5e6f68" font-family="Segoe UI, PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="13">材料、生成和修改都留在本机；模型只返回候选，不直接写文件。</text>
+
+  <g font-family="Segoe UI, PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif">
+    <rect x="48" y="98" width="864" height="86" rx="18" fill="#173b31"/>
+    <text x="72" y="128" fill="#d9efe4" font-size="11" font-weight="700" letter-spacing="1.4">01 · 工作台</text>
+    <text x="72" y="154" fill="#ffffff" font-size="18" font-weight="700">简历工作台</text>
+    <text x="250" y="154" fill="#d7ebe1" font-size="13">编辑内容 · A4 预览 · PDF / Word · 可收起的简历 Agent</text>
+
+    <path d="M480 184 v18" stroke="#8eaa9c" stroke-width="1.6" fill="none"/>
+    <path d="M474 198 h12 l-6 8 z" fill="#8eaa9c"/>
+
+    <rect x="48" y="210" width="864" height="78" rx="18" fill="#fffefa" stroke="#d5ddd4"/>
+    <text x="72" y="240" fill="#6d8f7e" font-size="11" font-weight="700" letter-spacing="1.4">02 · 本地 API</text>
+    <text x="72" y="266" fill="#173b31" font-size="18" font-weight="700">FastAPI</text>
+    <text x="168" y="266" fill="#5e6f68" font-size="13">本机接口。简历、任务和导出都从这里进出，默认只监听回环地址。</text>
+
+    <path d="M480 288 v18" stroke="#8eaa9c" stroke-width="1.6" fill="none"/>
+    <path d="M474 302 h12 l-6 8 z" fill="#8eaa9c"/>
+
+    <rect x="48" y="314" width="864" height="132" rx="18" fill="#e7f3ec"/>
+    <text x="72" y="340" fill="#3d6b58" font-size="11" font-weight="700" letter-spacing="1.4">03 · 材料 / 生成 / AGENT</text>
+    <rect x="68" y="354" width="260" height="72" rx="14" fill="#fffefa"/>
+    <text x="86" y="384" fill="#173b31" font-size="15" font-weight="700">材料</text>
+    <text x="86" y="406" fill="#5e6f68" font-size="12">解析简历与 JD，切成可引用证据</text>
+    <rect x="350" y="354" width="260" height="72" rx="14" fill="#fffefa"/>
+    <text x="368" y="384" fill="#173b31" font-size="15" font-weight="700">生成</text>
+    <text x="368" y="406" fill="#5e6f68" font-size="12">按方向规划，整理成可编辑候选</text>
+    <rect x="632" y="354" width="260" height="72" rx="14" fill="#fffefa"/>
+    <text x="650" y="384" fill="#173b31" font-size="15" font-weight="700">简历 Agent</text>
+    <text x="650" y="406" fill="#5e6f68" font-size="12">压缩、重排、突出重点，并可撤销</text>
+
+    <path d="M480 446 v18" stroke="#8eaa9c" stroke-width="1.6" fill="none"/>
+    <path d="M474 460 h12 l-6 8 z" fill="#8eaa9c"/>
+
+    <rect x="48" y="472" width="864" height="78" rx="18" fill="#fffefa" stroke="#d5ddd4"/>
+    <text x="72" y="502" fill="#6d8f7e" font-size="11" font-weight="700" letter-spacing="1.4">04 · SKILL 与事实门禁</text>
+    <text x="72" y="528" fill="#173b31" font-size="18" font-weight="700">写作规则与核对</text>
+    <text x="250" y="528" fill="#5e6f68" font-size="13">分岗位 Skill、引用检查、质量审阅。通过后仍要你确认。</text>
+
+    <path d="M480 550 v18" stroke="#8eaa9c" stroke-width="1.6" fill="none"/>
+    <path d="M474 564 h12 l-6 8 z" fill="#8eaa9c"/>
+
+    <rect x="48" y="576" width="864" height="78" rx="18" fill="#245344"/>
+    <text x="72" y="606" fill="#d9efe4" font-size="11" font-weight="700" letter-spacing="1.4">05 · 模型</text>
+    <text x="72" y="632" fill="#ffffff" font-size="18" font-weight="700">官方 API 或自定义中转</text>
+    <text x="318" y="632" fill="#d7ebe1" font-size="13">Chat Completions · Responses · Anthropic Messages</text>
+
+    <path d="M480 654 v18" stroke="#8eaa9c" stroke-width="1.6" fill="none"/>
+    <path d="M474 668 h12 l-6 8 z" fill="#8eaa9c"/>
+
+    <rect x="48" y="680" width="420" height="44" rx="14" fill="#fffefa" stroke="#d5ddd4"/>
+    <text x="70" y="708" fill="#173b31" font-size="14" font-weight="700">SQLite 与本地文件</text>
+    <text x="248" y="708" fill="#5e6f68" font-size="12">简历、版本、任务</text>
+    <rect x="492" y="680" width="420" height="44" rx="14" fill="#d9efe4"/>
+    <text x="514" y="708" fill="#173b31" font-size="14" font-weight="700">导出</text>
+    <text x="566" y="708" fill="#3d6b58" font-size="12">同一份正文生成 PDF 与 DOCX</text>
+  </g>
+</svg>

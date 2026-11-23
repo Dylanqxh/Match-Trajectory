@@ -17,7 +17,7 @@ export function WorkspaceSidebar({ resumes, jobs, selectedResumeId, selectedJobI
   const jobRow = (job: GenerationSummary, nested = false) => <div className={`record-nav-row workspace-job ${nested ? "nested" : ""}`} key={job.id}>
     <button className={`resume-link ${selectedJobId === job.id ? "active" : ""}`} disabled={disabled} onClick={() => onSelectJob(job)}>
       <span>{modeLabels[job.mode] || "生成任务"}</span><small>{job.target_role || "方向待填写"} · {stateLabels[job.state] || "处理中"}</small>
-    </button><button className="delete-record" disabled={disabled} aria-label={`删除生成任务 ${job.target_role}`} onClick={() => onDeleteJob(job)}>删除</button>
+    </button><button className="delete-record" disabled={disabled} aria-label={`删除生成任务 ${job.target_role}`} title="删除任务" onClick={() => onDeleteJob(job)}>×</button>
   </div>;
   return <section className="workspace-tree" aria-label="简历与任务">
     <div className="nav-heading">简历工作区 <span>{resumes.length}</span></div>
@@ -25,7 +25,7 @@ export function WorkspaceSidebar({ resumes, jobs, selectedResumeId, selectedJobI
       <div className="record-nav-row"><button className={`resume-link ${selectedResumeId === node.resume.id && !selectedJobId ? "active" : ""}`}
         disabled={disabled} onClick={() => onSelectResume(node.resume)}>
         <span>{node.resume.name || "未命名简历"}</span><small>{node.resume.target_role || "方向待填写"} · v{node.resume.revision}{node.resume.origin === "demo" ? " · 演示" : ""}</small>
-      </button><button className="delete-record" disabled={disabled} aria-label={`删除简历 ${node.resume.name || "未命名简历"}`} onClick={() => onDeleteResume(node.resume)}>删除</button></div>
+      </button><button className="delete-record" disabled={disabled} aria-label={`删除简历 ${node.resume.name || "未命名简历"}`} title="删除简历" onClick={() => onDeleteResume(node.resume)}>×</button></div>
       <div className="workspace-job-summary">相关任务 {node.jobs.length}</div>
       {node.jobs.map(job => jobRow(job, true))}
     </div>)}</nav>

@@ -13,6 +13,8 @@ describe("WorkspaceSidebar", () => {
       onSelectJob={() => undefined} onDeleteJob={() => undefined}/>);
 
     expect(html).toContain("林然后端简历");
+    expect(html).toContain("删除简历 林然后端简历");
+    expect(html).not.toContain(">删除<");
     expect(html).toContain("相关任务 1");
     expect(html.indexOf("林然后端简历")).toBeLessThan(html.indexOf("生成初稿"));
     expect(html).not.toContain("我的简历");

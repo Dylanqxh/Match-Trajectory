@@ -222,6 +222,8 @@ class GenerationInput(StrictModel):
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{8,80}$")
     name: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
+    location: str = Field(default="", max_length=80)
+    profile_note: str = Field(default="", max_length=80)
     target_role: str = Field(default="", max_length=80)
     role_direction: Literal["product", "backend", "frontend", "testing", "data-engineering", "algorithm", "data-analysis", "operations", "other"] | None = None
     source_text: str = Field(default="", max_length=20000)

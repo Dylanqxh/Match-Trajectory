@@ -36,10 +36,12 @@ export function ResumeEditor({ content, activeSection, disabled, onActiveSection
     </nav>
     <fieldset className="editor-section-content" disabled={disabled}>
       {activeSection === "basics" && <section aria-label="基本信息表单">
-        <div className="editor-section-heading"><h3>基本信息</h3><p>姓名与联系方式只保存在本机字段中。</p></div>
+        <div className="editor-section-heading"><h3>基本信息</h3><p>姓名、联系方式、城市和档案补充只保存在本机字段中。留空的不会出现在简历上。</p></div>
         <div className="two-fields"><label>姓名<input aria-label="姓名" value={content.name} maxLength={80} onChange={e => onChange({ ...content, name: e.target.value })}/></label>
           <label>目标岗位<input aria-label="目标岗位" value={content.target_role} maxLength={80} onChange={e => onChange({ ...content, target_role: e.target.value })}/></label></div>
         <label>联系方式<input aria-label="联系方式" value={content.contact} maxLength={300} onChange={e => onChange({ ...content, contact: e.target.value })}/></label>
+        <div className="two-fields"><label>所在城市（可选）<input aria-label="所在城市" value={content.location || ""} maxLength={80} onChange={e => onChange({ ...content, location: e.target.value })} placeholder="留空则不出现"/></label>
+          <label>档案补充（可选）<input aria-label="档案补充" value={content.profile_note || ""} maxLength={80} onChange={e => onChange({ ...content, profile_note: e.target.value })} placeholder="留空则不写入"/></label></div>
         <label>个人简介（可留空）<textarea aria-label="个人简介" rows={4} value={content.summary} maxLength={2000} onChange={e => onChange({ ...content, summary: e.target.value })}/></label>
       </section>}
       {activeSection === "education" && <section aria-label="教育背景表单">

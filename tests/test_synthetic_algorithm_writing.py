@@ -15,8 +15,8 @@ def _kept():
         {"id": "intern", "title": "北屿智算", "kind": "work", "organization": "北屿智算", "role": "算法实习生",
          "start_date": "2025-03", "end_date": "2025-08", "fact_ids": ["e1"], "items": [
              {"id": "task", "text": "离线推荐召回要在澄湾课程点击子集上对比负样本。现有双塔召回的点击 Recall@50 是 0.31，负样本只按随机抽取。", "fact_ids": ["e1"]},
-             {"id": "change", "text": "把同会话未点击加入负样本，并保留随机负样本作对照。特征流水线由同组同学维护，本人不负责特征平台。", "fact_ids": ["e1"]},
-             {"id": "result", "text": "离线评测使用澄湾课程点击子集 8 万条，不是线上。Recall@50 从 0.31 到 0.36。没有全站收益。", "fact_ids": ["e1"]},
+             {"id": "change", "text": "把同会话未点击加入负样本，并保留随机负样本作对照。离线评测使用澄湾课程点击子集 8 万条，不是线上。Recall@50 从 0.31 到 0.36。", "fact_ids": ["e1"]},
+             {"id": "parallel", "text": "并行用同一份点击日志单独训练排序模型，不使用这次新的负样本。离线 NDCG@10 从 0.42 到 0.45。这项不依赖召回改动。", "fact_ids": ["e1"]},
          ]},
         {"id": "skills", "title": "专业技能", "kind": "skills", "fact_ids": ["e1"], "items": [
             {"id": "stack", "text": "离线实验：Python 与 PyTorch，只用于上述召回对照。", "fact_ids": ["e1"]},
@@ -69,4 +69,46 @@ def test_skipped_followups_do_not_excuse_dropping_strong_signals_or_filling_plac
     blocking = gate_warnings(job, invented)
     assert any(issue.severity == "blocking" and "985" in issue.message for issue in blocking)
     assert any(issue.severity == "blocking" and "占位符" in issue.message for issue in blocking)
-    assert "共青团员" not in "\n".join(item.text for section in kept.sections for item in section.items)
+    body = "\n".join(item.text for section in kept.sections for item in section.items)
+    assert "共青团员" not in body
+    assert "他人" not in body and "不负责" not in body
+    assert "Recall@50" in body and "NDCG@10" in body and "不依赖召回改动" in body
+    guide = Path(__file__).resolve().parents[1].joinpath("skills/resume-writing/references/roles")
+    improved = guide.joinpath("algorithm.md").read_text(encoding="utf-8").split("改进写法", 1)[1]
+    assert "由他人维护" not in improved and "Recall@50" in improved and "NDCG@10" in improved
+    product = guide.joinpath("product.md").read_text(encoding="utf-8").split("改进写法", 1)[1]
+    assert "研发排期" not in product and "18 条" in product
+    operations = guide.joinpath("operations.md").read_text(encoding="utf-8").split("改进写法", 1)[1]
+    assert "阅读量" not in operations.split("不写", 1)[0] and "3 场" in operations
+
+
+def test_optional_header_fields_survive_only_when_the_user_fills_them(tmp_path):
+    from io import BytesIO
+
+    from docx import Document
+
+    from app.models import Item, ResumeContent, Section
+    from app.rendering import render_docx, render_html
+    from app.store import ResumeStore
+
+    content = ResumeContent(name="周衡", target_role="算法实习生", contact="zhouheng-demo@example.invalid",
+                            location="澄湾", profile_note="共青团员",
+                            sections=[Section(id="work", title="北屿智算", kind="work", items=[Item(id="a", text="完成离线召回对照。")])])
+    html = render_html(content)
+    document = "\n".join(paragraph.text for paragraph in Document(BytesIO(render_docx(content, False, False))).paragraphs)
+    assert "澄湾" in html and "共青团员" in html
+    assert "澄湾" in document and "共青团员" in document
+    omitted = content.model_copy(update={"location": "", "profile_note": ""})
+    quiet = render_html(omitted)
+    assert "共青团员" not in quiet and "澄湾" not in quiet
+    store = ResumeStore(tmp_path / "resume.sqlite")
+    loaded = store.get(store.create(content, "manual").id)
+    assert loaded.content.location == "澄湾" and loaded.content.profile_note == "共青团员"
+    from app.generation_models import GenerationInput
+    from app.intake import complete_intake
+
+    kept_fields = complete_intake(GenerationInput(request_id="header001", source_text=SOURCE, location="澄湾", profile_note="共青团员", send_materials=True))
+    assert kept_fields.location == "澄湾" and kept_fields.profile_note == "共青团员"
+    blank_fields = complete_intake(GenerationInput(request_id="header002", source_text=SOURCE, send_materials=True))
+    assert blank_fields.location == "" and blank_fields.profile_note == ""
+    assert "共青团员" in SOURCE

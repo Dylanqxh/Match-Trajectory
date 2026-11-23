@@ -188,6 +188,8 @@ class GenerationService:
         contact = header_contact(inputs.get("contact") or "", inputs.get("source_text") or "")
         content = draft.to_content(inputs["name"], contact, inputs["target_role"], fixed or None) if draft else ResumeContent(
             name=inputs["name"], contact=contact, target_role=inputs["target_role"], education=fixed)
+        content.location = (inputs.get("location") or "").strip()
+        content.profile_note = (inputs.get("profile_note") or "").strip()
         status = "passed" if job["review"] and job["review"]["verdict"] == "pass" and not any(
             i["severity"] == "blocking" for i in job["issues"]) else "blocked" if job["issues"] else "unreviewed"
         info = AIInfo(job_id=job["id"], review_job_id=job["id"], review_status=status, content_hash=resume_hash(content),

@@ -2,7 +2,7 @@ export interface Period { start_date?: string; end_date?: string }
 export interface Education extends Period { id: string; school: string; degree: string; major: string }
 export interface Item { id: string; text: string; highlights?: string[] }
 export interface Section extends Period { id: string; title: string; kind?: string; organization?: string; role?: string; items: Item[] }
-export interface Content { name: string; target_role: string; contact: string; summary: string; education: Education[]; sections: Section[] }
+export interface Content { name: string; target_role: string; contact: string; location?: string; profile_note?: string; summary: string; education: Education[]; sections: Section[] }
 export interface WritingQuality {
   status: "ready" | "revise" | "insufficient";
   dimensions: { dimension: "fit" | "contribution" | "evidence" | "readability"; score: number | null; reason: string; item_ids: string[]; evidence_ids: string[]; action: string }[];
@@ -11,7 +11,7 @@ export interface WritingQuality {
 export interface AIInfo { job_id: string; review_job_id: string; review_status: "passed" | "blocked" | "unreviewed"; manual_takeover: boolean; issues: GenerationIssue[]; quality?: WritingQuality | null }
 export interface Resume { id: string; revision: number; confirmed_revision: number | null; origin: "manual" | "demo" | "ai"; content: Content; updated_at: string; ai: AIInfo | null }
 export interface Summary { id: string; revision: number; origin: string; name: string; target_role: string }
-export const emptyContent: Content = { name: "", target_role: "", contact: "", summary: "", education: [], sections: [] };
+export const emptyContent: Content = { name: "", target_role: "", contact: "", location: "", profile_note: "", summary: "", education: [], sections: [] };
 export interface GenerationIssue { item_id: string; severity: "blocking" | "warning"; code: string; message: string; suggestion?: string; resolution?: { action: string; revision: number; explanation?: string; evidence_ids?: string[] } }
 export function unresolvedBlocking(issue: GenerationIssue): boolean {
   return issue.severity === "blocking" && !["deleted", "source_reviewed"].includes(issue.resolution?.action || "");

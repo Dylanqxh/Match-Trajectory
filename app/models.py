@@ -78,6 +78,8 @@ class ResumeContent(StrictModel):
     name: str = Field(default="", max_length=80)
     target_role: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
+    location: str = Field(default="", max_length=80)
+    profile_note: str = Field(default="", max_length=80)
     summary: str = Field(default="", max_length=2000)
     education: list[Education] = Field(default_factory=list, max_length=8)
     sections: list[Section] = Field(default_factory=list, max_length=12)
@@ -123,6 +125,9 @@ def resume_hash(content: ResumeContent) -> str:
     value = content.model_dump()
     if not value["education"]:
         value.pop("education")
+    for key in ("location", "profile_note"):
+        if not value.get(key):
+            value.pop(key, None)
     for section in value["sections"]:
         for key, default in (("kind", "other"), ("organization", ""), ("role", ""), ("start_date", ""), ("end_date", "")):
             if section[key] == default:
@@ -149,6 +154,8 @@ class CreateResume(StrictModel):
     name: str = Field(default="", max_length=80)
     target_role: str = Field(default="", max_length=80)
     contact: str = Field(default="", max_length=300)
+    location: str = Field(default="", max_length=80)
+    profile_note: str = Field(default="", max_length=80)
     source_text: str = Field(default="", max_length=20000)
     education: list[Education] = Field(default_factory=list, max_length=8)
 

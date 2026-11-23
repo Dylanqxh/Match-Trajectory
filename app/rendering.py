@@ -36,7 +36,7 @@ def font_path() -> Path:
 
 
 def expected_texts(content: ResumeContent) -> list[str]:
-    values = [content.name, content.target_role, content.contact, content.summary,
+    values = [content.name, content.target_role, content.contact, content.location, content.profile_note, content.summary,
               *[value for row in content.education for value in (row.school, row.degree, row.major, row.start_date, row.end_date)],
               *[value for section in content.sections for value in [section.title, section.organization, section.role,
                  section.start_date, section.end_date, *[item.text for item in section.items]]]]
@@ -186,6 +186,8 @@ section{{break-inside:auto;margin-top:calc(2mm + var(--extra-section-gap))}}h2{{
 </style></head><body><main class="sheet"><div class="resume-content">
 {f'<div class="notice">{esc(notice)}</div>' if notice else ''}<h1>{esc(content.name or '姓名待填写')}</h1>
 <div class="role">{esc(content.target_role)}</div><div class="contact">{esc(content.contact)}</div>
+{f'<div class="contact">{esc(content.location)}</div>' if content.location else ''}
+{f'<div class="contact">{esc(content.profile_note)}</div>' if content.profile_note else ''}
 {education}{f'<div class="summary">{esc(content.summary)}</div>' if content.summary else ''}{sections}</div></main>{fit_script}</body></html>'''.replace('class="sheet"', f'class="sheet{density_class}"', 1)
 
 
@@ -228,7 +230,7 @@ def render_docx(content: ResumeContent, demo: bool, draft: bool) -> bytes:
     run = heading.add_run(content.name or "姓名待填写")
     heading.paragraph_format.space_after = Pt(1)
     run.bold, run.font.size = True, Pt(21 if dense else 20)
-    for text in (content.target_role, content.contact):
+    for text in (content.target_role, content.contact, content.location, content.profile_note):
         if text:
             paragraph = doc.add_paragraph(text)
             paragraph.paragraph_format.space_after = Pt(1)

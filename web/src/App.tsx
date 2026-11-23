@@ -77,8 +77,8 @@ export default function App() {
   const agentPinned = useRef<boolean | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const previewBox = useRef<HTMLDivElement>(null);
-  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, education: content.education, source, jd, careerStage, careerGap });
-  const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim()
+  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, location: content.location, profile_note: content.profile_note, education: content.education, source, jd, careerStage, careerGap });
+  const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim() || (content.location || "").trim() || (content.profile_note || "").trim()
     || careerStage !== "unspecified" || careerGap || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
 
   function adopt(row: Resume) {
@@ -190,7 +190,7 @@ export default function App() {
       const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
       if (!covered) throw new Error("请先上传一份简历或 JD，或在下面粘贴经历");
       if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
-      const payload = { name: content.name, contact: content.contact, target_role: content.target_role,
+      const payload = { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role,
         role_direction: roleDirection,
         education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap,
         execution_mode: useSupervisor ? "supervisor" : "langgraph", allow_questions: allowQuestions, send_materials: sendMaterials };
@@ -347,9 +347,11 @@ export default function App() {
         </div>
         <form onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
           <section className="identity-strip" aria-label="姓名与联系方式">
-            <p>姓名和联系方式保存在本机，单独填写，不会埋进补充信息。</p>
+            <p>姓名、联系方式、城市和档案补充都由你单独填写。留空的不会从材料里自动抄到页眉。</p>
             <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="可留空，沿用材料中的姓名"/></label>
             <label>联系方式<input value={content.contact} maxLength={300} onChange={e => setContent({ ...content, contact: e.target.value })} placeholder="可留空，沿用材料中的手机或邮箱"/></label>
+            <label>所在城市（可选）<input aria-label="所在城市" value={content.location || ""} maxLength={80} onChange={e => setContent({ ...content, location: e.target.value })} placeholder="留空则不出现在简历上"/></label>
+            <label>档案补充（可选）<input aria-label="档案补充" value={content.profile_note || ""} maxLength={80} onChange={e => setContent({ ...content, profile_note: e.target.value })} placeholder="例如政治面貌；留空则不写入"/></label>
           </section>
           <div className="material-card">
             <div className="material-card-head"><div><span className="eyebrow">新建简历</span><h3>确定方向，再放入材料</h3></div><span className="privacy-badge">仅在本机整理</span></div>
@@ -385,7 +387,7 @@ export default function App() {
               <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
             </details>
             <button className="text-button" type="button" onClick={() => void action(async () => {
-              adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
+              adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
             })}>先不生成，进入编辑器 →</button>
           </section>
         </fieldset></form>

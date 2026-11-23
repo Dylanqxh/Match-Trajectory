@@ -279,9 +279,11 @@ class AgentService:
 
     def _context(self, snapshot: dict, session: dict, request: str) -> dict:
         content = snapshot["content"].model_copy(deep=True)
-        secrets = [content.name, content.contact, *[row.school for row in content.education]]
+        secrets = [content.name, content.contact, content.location, content.profile_note, *[row.school for row in content.education]]
         content.name = ""
         content.contact = ""
+        content.location = ""
+        content.profile_note = ""
         for row in content.education:
             row.school = ""
 

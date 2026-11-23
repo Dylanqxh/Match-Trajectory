@@ -23,7 +23,7 @@ def check_export(record: ResumeRecord, request: ExportRequest):
     if record.revision != request.expected_revision:
         raise Conflict("内容版本已变化，请重新保存后导出")
     content = record.content
-    has_content = bool(content.name or content.contact or content.summary or content.education
+    has_content = bool(content.name or content.contact or content.location or content.profile_note or content.summary or content.education
                        or any(section.items for section in content.sections))
     if not has_content:
         raise IncompleteResume("当前简历还是空白内容，请先填写或生成简历再导出")

@@ -132,7 +132,7 @@ def run(output, executable=None):
                 page.get_by_label("确认将材料和可选 JD 发送给所选模型服务").check()
                 page.get_by_role("button", name="AI 生成简历", exact=True).click()
                 page.get_by_role("button", name="采用并进入编辑器", exact=True).click(timeout=20000)
-                page.get_by_role("button", name="自行核对并接管", exact=True).click()
+                page.get_by_role("button", name="逐项核对并修正", exact=True).click()
                 expect(page.get_by_role("dialog", name="核对审阅问题", exact=True)).to_be_visible()
                 page.get_by_label("选择材料 e1", exact=True).check()
                 page.get_by_label("核对说明", exact=True).fill("原文明确说明本人完成查询接口并编写测试记录，与当前表述一致。")
@@ -140,7 +140,7 @@ def run(output, executable=None):
                 page.get_by_role("button", name="保存人工核对结果", exact=True).click()
                 expect(page.get_by_role("dialog", name="核对审阅问题", exact=True)).not_to_be_visible()
                 page.once("dialog", lambda dialog: dialog.accept())
-                page.get_by_role("button", name="自行核对并接管", exact=True).click()
+                page.get_by_role("button", name="逐项核对并修正", exact=True).click()
                 expect(page.get_by_test_id("ai-review-state")).to_contain_text("用户自行核对")
                 with page.expect_download(timeout=65000) as download:
                     page.get_by_role("button", name="确认并导出 Word", exact=True).click()

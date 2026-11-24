@@ -29,6 +29,9 @@ def prepare_draft(job, output):
 
     payload = polish_draft(payload, job)
     payload['sections'] = arrange_draft_sections(payload.get('sections') or [], job['input'].get('jd') or '')
+    from app.skill import repair_period_citations
+
+    payload = repair_period_citations(payload, job.get('evidence') or [])
     try:
         return Draft.model_validate(payload)
     except ValidationError as exc:

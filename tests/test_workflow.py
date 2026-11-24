@@ -780,6 +780,46 @@ def test_unrelated_plan_failure_keeps_materials_and_versions(tmp_path):
     assert kept.id in {row["id"] for row in store.list()}
 
 
+def test_unconfigured_model_refuses_before_creating_a_job(tmp_path):
+    runner, jobs, _, registry, _ = setup(tmp_path, [])
+    registry.current = None
+    registry._configs.clear()
+    with pytest.raises(ValueError, match="不会创建生成任务"):
+        runner.submit(request(source_text="使用 Java 完成查询接口。", request_id="no-model-0001"))
+    assert jobs.list() == []
+
+
+def test_retry_lineage_joins_only_the_same_failed_attempt(tmp_path):
+    from types import SimpleNamespace
+
+    _, jobs, _, _, _ = setup(tmp_path, [])
+    skill = SimpleNamespace(role="general", version="v", instructions="", resources=[], stage_resources={}, stage_instructions={})
+
+    def inputs(request_id, **extra):
+        return {"request_id": request_id, "name": "", "contact": "", "target_role": "后端", "source_text": "真实材料",
+                "jd": "", "education": [], "career_stage": "unspecified", "has_career_gap": False,
+                "execution_mode": "langgraph", "allow_questions": True, "send_materials": True,
+                "edit_request": "none", "lineage_id": "", **extra}
+
+    failed = jobs.create(inputs("line-failed"), "config", {}, skill, [],
+                         extra={"state": "failed", "stage": "plan", "error": "其他错误", "group_id": "g1", "lineage_id": "line-1"})
+    ready = jobs.create(inputs("line-ready"), "config", {}, skill, [],
+                        extra={"state": "ready", "stage": "done", "group_id": "g9", "lineage_id": "line-ready"})
+    from app.generation_service import GenerationService
+    from app.model_client import ModelRegistry
+    from app.providers import ProviderConfig
+
+    registry = ModelRegistry()
+    registry.register(ProviderConfig(provider="custom", base_url="http://127.0.0.1:9/v1", model="fixture", api_key="not-a-secret"))
+    service = GenerationService(jobs.store, jobs, registry, None)
+    retried = service.submit(request(source_text="真实材料改过一点", request_id="line-retry-0002", lineage_id="line-1"))
+    assert retried["lineage_id"] == "line-1"
+    assert retried["group_id"] == failed["group_id"]
+    with pytest.raises(ValueError, match="不会并入其他简历"):
+        service.submit(request(source_text="另一段真实材料", request_id="line-other-0003", lineage_id="line-ready"))
+    assert ready["lineage_id"] == "line-ready"
+
+
 def test_group_id_persists_for_inflight_and_failed_jobs(tmp_path):
     from types import SimpleNamespace
 

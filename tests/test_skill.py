@@ -51,6 +51,46 @@ def test_stage_load_keeps_editorial_and_role_files_without_rejected_rules():
     assert "也不能从正文自动抽出来" in draft
 
 
+def test_quantity_and_date_gates_share_safe_normalization():
+    from app.generation_models import Draft
+    from app.skill import build_evidence, repair_period_citations, validate_draft
+
+    evidence = build_evidence("覆盖 10名 用户。接口耗时降低百分之30。第1项完成查询接口。")
+    ordinal = Draft.model_validate({"sections": [{"id": "projects", "title": "项目经历", "items": [
+        {"id": "item1", "text": "第1项完成查询接口，覆盖 10人，耗时降低 30%。", "fact_ids": ["e1"]},
+    ]}]})
+    assert not any(issue.code == "unsupported" and "数字" in issue.message for issue in validate_draft(ordinal, evidence))
+    invented = Draft.model_validate({"sections": [{"id": "projects", "title": "项目经历", "items": [
+        {"id": "item1", "text": "完成查询接口，另用 3个月。", "fact_ids": ["e1"]},
+    ]}]})
+    assert any(issue.code == "unsupported" and "数字" in issue.message for issue in validate_draft(invented, evidence))
+
+    dated = build_evidence("澄湾实习\n2024.09 到 2025-03 完成查询接口。")
+    missing_cite = Draft.model_validate({"sections": [{"id": "work", "title": "实习", "organization": "澄湾实习", "start_date": "2024-09", "items": [
+        {"id": "item1", "text": "完成查询接口。", "fact_ids": ["e1"]},
+    ]}]})
+    # The period lives in the only chunk, which is already cited.
+    assert not any("经历时间" in issue.message for issue in validate_draft(missing_cite, dated))
+    inferred = Draft.model_validate({"sections": [{"id": "work", "title": "实习", "organization": "澄湾实习", "start_date": "2024-07", "items": [
+        {"id": "item1", "text": "2024年暑假参加澄湾实习。", "fact_ids": ["e1"]},
+    ]}]})
+    summer = build_evidence("2024年暑假参加澄湾实习。")
+    assert any("经历时间" in issue.message for issue in validate_draft(inferred, summer))
+
+    split = build_evidence("完成查询接口。") + build_evidence("澄湾实习 2024-09 开始。", prefix="p")
+    draft = {"sections": [{"id": "work", "title": "实习", "organization": "澄湾实习", "start_date": "2024-09", "items": [
+        {"id": "item1", "text": "完成查询接口。", "fact_ids": [split[0].id]},
+    ]}]}
+    repaired = repair_period_citations(draft, [row.model_dump() for row in split])
+    assert split[1].id in repaired["sections"][0]["fact_ids"]
+    unrelated = build_evidence("完成查询接口。") + build_evidence("另一段 2024-09 的课程。", prefix="p")
+    foreign = {"sections": [{"id": "work", "title": "实习", "organization": "澄湾实习", "start_date": "2024-09", "items": [
+        {"id": "item1", "text": "完成查询接口。", "fact_ids": [unrelated[0].id]},
+    ]}]}
+    assert any("经历时间" in issue.message for issue in validate_draft(
+        Draft.model_validate(foreign), unrelated))
+
+
 def test_source_ranges_preserve_original_text_and_restrictions():
     from app.skill import build_evidence
 

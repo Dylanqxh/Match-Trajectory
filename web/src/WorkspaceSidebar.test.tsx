@@ -35,7 +35,7 @@ describe("WorkspaceSidebar", () => {
       onSelectResume={() => undefined} onDeleteResume={() => undefined}
       onSelectJob={() => undefined} onDeleteJob={() => undefined}/>);
 
-    expect(html).toContain("这次生成");
+    expect(html).toContain("生成失败");
     expect(html).toContain("job-link active");
     expect(html).not.toContain("未命名简历");
     expect(html).not.toContain("未归档任务");

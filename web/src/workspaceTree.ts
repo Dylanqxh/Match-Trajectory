@@ -7,7 +7,7 @@ export interface ResumeNode {
 
 export interface BatchNode {
   id: string;
-  label: "这次生成";
+  label: "这次生成" | "生成失败";
   jobs: GenerationSummary[];
 }
 
@@ -21,10 +21,12 @@ export function buildWorkspaceTree(resumes: Summary[], jobs: GenerationSummary[]
   const byResume = new Map(nodes.map(node => [node.resume.id, node]));
   const groups = new Map<string, GenerationSummary[]>();
   for (const job of jobs) {
-    const key = job.group_id || job.id;
+    const key = job.lineage_id || job.group_id || job.id;
     groups.set(key, [...(groups.get(key) || []), job]);
   }
   const batches: BatchNode[] = [];
+  const labelFor = (group: GenerationSummary[]): BatchNode["label"] =>
+    group.every(job => job.state === "failed" || job.state === "interrupted") ? "生成失败" : "这次生成";
   for (const [key, group] of groups) {
     const resumeIds = [...new Set(group.map(job => job.resume_id).filter((id): id is string => Boolean(id && byResume.has(id))))];
     if (resumeIds.length === 1) {
@@ -36,11 +38,11 @@ export function buildWorkspaceTree(resumes: Summary[], jobs: GenerationSummary[]
       for (const job of group) {
         const parent = job.resume_id ? byResume.get(job.resume_id) : undefined;
         if (parent) parent.jobs.push(job);
-        else batches.push({ id: `${key}:${job.id}`, label: "这次生成", jobs: [job] });
+        else batches.push({ id: `${key}:${job.id}`, label: labelFor([job]), jobs: [job] });
       }
       continue;
     }
-    batches.push({ id: key, label: "这次生成", jobs: group });
+    batches.push({ id: key, label: labelFor(group), jobs: group });
   }
   return { resumes: nodes, batches };
 }

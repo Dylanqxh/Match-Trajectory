@@ -72,11 +72,14 @@ class JobStore:
                    "budget_policy": DEFAULT_POLICY.model_dump(),
                    "step_receipts": [],
                    "group_id": "",
+                   "lineage_id": "",
                    "created_at": timestamp(), "updated_at": timestamp()}
             if extra:
                 job.update(extra)
             if not job.get("group_id"):
                 job["group_id"] = uuid.uuid4().hex
+            if not job.get("lineage_id"):
+                job["lineage_id"] = uuid.uuid4().hex
             connection.execute(insert(job_rows).values(id=job["id"], request_id=inputs["request_id"],
                                                        input_hash=digest, state=job["state"], created_at=job["created_at"],
                                                        data=json.dumps(job, ensure_ascii=False)))
@@ -93,6 +96,7 @@ class JobStore:
         jobs = sorted((j for data in rows if not (j := json.loads(data)).get("deleted")), key=lambda job: job["created_at"], reverse=True)
         return [{**{key: job[key] for key in keys}, "target_role": job["input"]["target_role"],
                  "group_id": job.get("group_id") or job["id"],
+                 "lineage_id": job.get("lineage_id") or job["id"],
                  "resume_id": job.get("adopted_resume_id") or job.get("input", {}).get("review_resume_id")}
                 for job in jobs[:50]]
 

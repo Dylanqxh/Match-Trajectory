@@ -3,7 +3,7 @@ import { buildWorkspaceTree } from "./workspaceTree";
 
 const stateLabels: Record<string, string> = {
   queued: "等待执行", running: "正在生成", waiting_input: "等待补充", ready: "已有结果",
-  failed: "可查看或继续", interrupted: "已中断", cancelled: "已取消",
+  failed: "生成失败", interrupted: "已中断", cancelled: "已取消",
 };
 const modeLabels: Record<string, string> = { generate: "生成初稿", recheck: "重新审阅", agent_edit: "Agent 修改" };
 const originLabels: Record<string, string> = { ai: "AI", manual: "手工", demo: "演示" };

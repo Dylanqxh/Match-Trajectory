@@ -4,6 +4,9 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
+
+from pydantic import ValidationError
 
 from app.generation_models import Draft, Evidence, Issue
 
@@ -152,7 +155,14 @@ def _clauses(text):
 
 
 def _quantities(text):
-    return {canonical_quantity(token) for token in NUMERIC.findall(normalize_source_dates(text))}
+    from app.gates import comparison_text
+
+    value = normalize_source_dates(text or "")
+    value = re.sub(r"百分之\s*(\d+(?:\.\d+)?)", r"\1%", value)
+    value = re.sub(r"(\d+(?:\.\d+)?)\s*名(?!称)", r"\1人", value)
+    value = comparison_text(value)
+    value = re.sub(r"(?<=[A-Za-z])\d+(?:\.\d+)?", " ", value)
+    return {canonical_quantity(token) for token in NUMERIC.findall(value)}
 
 
 def _moved_across_projects(claim, source):
@@ -190,7 +200,7 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
             continue
         source = "\n".join(sources[ref] for ref in claim.fact_ids)
         source_numbers = _quantities(source)
-        if any(canonical_quantity(n) not in source_numbers for n in NUMERIC.findall(normalize_source_dates(claim.text))):
+        if not _quantities(claim.text) <= source_numbers:
             add("unsupported", "段落出现了引用原文中没有的数字或数量口径，请删除或补充依据。")
         elif _moved_across_projects(claim.text, source):
             add("unsupported", "数字被挪到了另一个项目上，请改回原文所属项目或删除。")
@@ -233,13 +243,70 @@ def validate_draft(draft: Draft, evidence: list[Evidence]) -> list[Issue]:
         if row.school and row.school not in source:
             issues.append(Issue(item_id=row.id, severity="blocking", code="unsupported", message="学校名称未在引用原文中出现，请核对，不得推断学校。"))
     for row in [*draft.education, *draft.sections]:
-        refs = row.fact_ids or list(dict.fromkeys(ref for item in row.items for ref in item.fact_ids)) or list(sources)
+        refs = list(row.fact_ids or list(dict.fromkeys(ref for item in getattr(row, "items", []) for ref in item.fact_ids)) or [])
         source = "\n".join(sources.get(ref, "") for ref in refs)
-        source = normalize_source_dates(source)
-        if any(value and value != "至今" and not re.search(r"(?<!\d)" + re.escape(value) + r"(?!\d)", source)
-               for value in (row.start_date, row.end_date)):
+        blob = " ".join(filter(None, [
+            getattr(row, "organization", ""), getattr(row, "role", ""), getattr(row, "school", ""),
+            *[item.text for item in getattr(row, "items", [])],
+        ]))
+        for value in (row.start_date, row.end_date):
+            grounded, repair_id = _period_grounding(value, source, evidence, blob)
+            if grounded:
+                if repair_id and repair_id not in row.fact_ids:
+                    if not row.fact_ids:
+                        row.fact_ids.extend(list(dict.fromkeys(
+                            ref for item in getattr(row, "items", []) for ref in item.fact_ids)))
+                    if repair_id not in row.fact_ids:
+                        row.fact_ids.append(repair_id)
+                continue
             issues.append(Issue(item_id=row.id, severity="blocking", code="unsupported", message="经历时间未在引用原文中出现，请删除推测日期或补充依据。"))
     return issues
+
+
+def _period_grounding(value, cited, evidence, blob) -> tuple[bool, str]:
+    """Return whether a stored period is grounded, and an evidence id when the citation can be repaired."""
+    from app.gates import date_keys
+
+    if not value or value == "至今":
+        return True, ""
+    normalized = normalize_source_dates(cited or "")
+    if re.search(r"(?<!\d)" + re.escape(value) + r"(?!\d)", normalized):
+        return True, ""
+    wanted = date_keys(value if re.search(r"\d{4}-\d{2}", value) else "")
+    if wanted and wanted <= date_keys(normalized):
+        return True, ""
+    hits = []
+    for row in evidence:
+        text = normalize_source_dates(getattr(row, "text", "") or "")
+        exact = re.search(r"(?<!\d)" + re.escape(value) + r"(?!\d)", text)
+        keyed = bool(wanted and wanted <= date_keys(text))
+        if exact or keyed:
+            hits.append(row)
+    if len(hits) == 1 and _same_experience(blob, hits[0].text):
+        return True, hits[0].id
+    return False, ""
+
+
+def _same_experience(blob: str, evidence_text: str) -> bool:
+    blob = blob or ""
+    evidence_text = evidence_text or ""
+    for part in re.split(r"[\s，,。；;]+", blob):
+        part = part.strip()
+        if len(part) >= 4 and part in evidence_text:
+            return True
+    return False
+
+
+def repair_period_citations(payload: dict, evidence: list) -> dict:
+    """Attach a missing period citation only when one evidence row clearly belongs to that experience."""
+    try:
+        draft = Draft.model_validate(payload)
+    except ValidationError:
+        return payload
+    rows = [SimpleNamespace(id=row.get("id", ""), text=row.get("text", "")) if isinstance(row, dict) else row for row in evidence or []]
+    validate_draft(draft, rows)
+    payload = draft.model_dump()
+    return payload
 
 
 def validate_quality(draft: Draft) -> list[Issue]:

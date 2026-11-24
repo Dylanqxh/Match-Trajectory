@@ -36,6 +36,11 @@ export function nextProgressFocus(input: {
   return keep;
 }
 
+export function modelPreflight(modelReady: boolean): { createJob: boolean; notice: string } {
+  if (!modelReady) return { createJob: false, notice: "尚未连接模型，不会创建生成任务。材料仍留在这里。" };
+  return { createJob: true, notice: "" };
+}
+
 export function isEditingOutside(active: { tagName?: string; isContentEditable?: boolean } | null, insidePanel: boolean): boolean {
   if (!active || insidePanel) return false;
   const tag = (active.tagName || "").toUpperCase();

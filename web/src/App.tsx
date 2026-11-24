@@ -13,6 +13,8 @@ import { ResumeEditor } from "./ResumeEditor";
 import { EditorSectionKey } from "./editorSections";
 import { VersionHistory } from "./VersionHistory";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
+import { ReviewIssues } from "./reviewIssues";
+import { modelPreflight } from "./progressPlacement";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -54,6 +56,8 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState("尚未连接模型");
   const [useSupervisor, setUseSupervisor] = useState(false);
   const generationRequest = useRef<{ key: string; id: string } | null>(null);
+  const retryLineage = useRef<string | null>(null);
+  const [actionNotice, setActionNotice] = useState("");
   const savedInput = useRef("");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -75,7 +79,6 @@ export default function App() {
   const [scale, setScale] = useState(0.8);
   const [agentCollapsed, setAgentCollapsed] = useState(true);
   const agentPinned = useRef<boolean | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
   const [histories, setHistories] = useState<Record<string, { revision: number; origin: string; updated_at: string }[]>>({});
   const [selectedVersion, setSelectedVersion] = useState<{ resumeId: string; revision: number } | null>(null);
   const previewBox = useRef<HTMLDivElement>(null);
@@ -150,10 +153,6 @@ export default function App() {
   useEffect(() => {
     setAgentCollapsed(preferredAgentCollapsed(Boolean(record), agentPinned.current));
   }, [record]);
-  useEffect(() => {
-    setReviewOpen(Boolean(record?.ai?.issues.some(unresolvedBlocking)));
-  }, [record?.id, record?.revision]);
-
   function toggleAgent() {
     setAgentCollapsed(current => {
       const next = !current;
@@ -195,21 +194,33 @@ export default function App() {
     setRecognized(fields.target_role ? `已从 JD 带上岗位「${fields.target_role}」。你填过的岗位不会被覆盖。` : "JD 已保存。没有写明岗位也可以直接生成。");
     setStatus("JD 已放进中间画布");
   }
+  function revealAction() {
+    const target = document.getElementById("generation-progress") || document.getElementById("generate-action");
+    target?.scrollIntoView({ block: "start" });
+  }
   async function generate() {
-    await action(async () => {
-      if (!roleDirection) throw new Error("请先选择这份简历的求职方向");
-      const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
-      if (!covered) throw new Error("请先上传一份简历或 JD，或在下面粘贴经历");
-      if ((source.trim() || jd.trim()) && !sendMaterials) throw new Error("请先确认将材料和 JD 发送给所选模型服务");
+    const preflight = modelPreflight(modelStatus.startsWith("已连接"));
+    if (!preflight.createJob) { setActionNotice(preflight.notice); revealAction(); return; }
+    if (!roleDirection) { setActionNotice("请先选择这份简历的求职方向"); revealAction(); return; }
+    const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
+    if (!covered) { setActionNotice("请先上传一份简历或 JD，或在下面粘贴经历"); revealAction(); return; }
+    if ((source.trim() || jd.trim()) && !sendMaterials) { setActionNotice("请先确认将材料和 JD 发送给所选模型服务"); revealAction(); return; }
+    setBusy(true); setError(""); setActionNotice("");
+    try {
       const payload = { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role,
         role_direction: roleDirection,
         education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap,
         execution_mode: useSupervisor ? "supervisor" : "langgraph", allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
       if (generationRequest.current?.key !== key) generationRequest.current = { key, id: crypto.randomUUID() };
-      const job = await api<GenerationJob>("/api/generation-jobs", { ...payload, request_id: generationRequest.current.id });
+      const job = await api<GenerationJob>("/api/generation-jobs", { ...payload, request_id: generationRequest.current.id, lineage_id: retryLineage.current || "" });
+      if (job.lineage_id) retryLineage.current = job.lineage_id;
       savedInput.current = formKey; showJob(job.id); await refreshJobs(); setStatus("材料已保存到生成任务，可以刷新后继续查看");
-    });
+      revealAction();
+    } catch (error) {
+      const message = (error as Error).message;
+      setError(message); setActionNotice(message); revealAction();
+    } finally { setBusy(false); }
   }
   async function recheck() {
     await action(async () => {
@@ -228,7 +239,7 @@ export default function App() {
   }
   async function confirmTakeover(row: Resume) {
     if (!window.confirm("全部阻断问题已处理。我已自行核对当前正文中的全部个人事实。接管后保留 AI 来源和旧报告，标记为用户自行核对。确定继续？")) {
-      setStatus("人工核对结果已保存；准备好后可点击“自行核对并接管”确认"); return;
+      setStatus("人工核对结果已保存；准备好后可点击“逐项核对并修正”确认"); return;
     }
     adopt(await api<Resume>(`/api/resumes/${row.id}/takeover`, { expected_revision: row.revision, acknowledged: true }));
     await refreshList();
@@ -236,7 +247,7 @@ export default function App() {
   }
   function editIssue(itemId: string) {
     setResolution(null);
-    setStatus("请修改或删除问题条目，然后保存并重新审阅，或再次自行核对并接管");
+    setStatus("请修改或删除问题条目，然后保存并重新审阅。逐项核对不会一次跳过事实问题");
     requestAnimationFrame(() => {
       const section = content.sections.find(s => s.id === itemId || s.items.some(i => i.id === itemId));
       const itemIndex = section?.items.findIndex(i => i.id === itemId) ?? -1;
@@ -290,6 +301,8 @@ export default function App() {
   }
   function jobUpdated(job: GenerationJob) {
     if (deletionInFlight.current) return;
+    if (job.lineage_id && ["failed", "interrupted"].includes(job.state)) retryLineage.current = job.lineage_id;
+    if (job.state === "ready") retryLineage.current = null;
     if (["ready", "failed", "interrupted", "cancelled", "waiting_input"].includes(job.state)) void refreshJobs().catch(() => {});
     if (job.mode === "generate" && job.state === "ready" && job.adopted_resume_id && selectedJobId.current === job.id) {
       void api<Resume>(`/api/resumes/${job.adopted_resume_id}`).then(row => {
@@ -326,7 +339,7 @@ export default function App() {
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={interactionLocked} onClick={() => {
-        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
+        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; retryLineage.current = null; setActionNotice(""); showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
       <WorkspaceSidebar resumes={list} jobs={jobs} versions={histories} selectedResumeId={record?.id || null} selectedJobId={jobId}
         selectedVersion={selectedVersion} disabled={interactionLocked}
@@ -354,7 +367,7 @@ export default function App() {
       </section>}
       {!modelStatus.startsWith("已连接") && record && <p className="model-chip">模型未连接，编辑和导出仍可用。<button type="button" className="text-button" onClick={() => setSettings(true)}>去连接</button></p>}
       <div className="canvas">
-      {jobId && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
+      {jobId && record && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
         onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
       {!record ? <section className="start-layout">
         <div className="welcome"><span className="eyebrow">还没有打开简历</span><h2>选择方向，放入材料，确认后生成。</h2>
@@ -386,8 +399,11 @@ export default function App() {
               {recognized && <p className="notice material-recognized">{recognized}</p>}
               {(source.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料"><span>{source.trim() ? `简历材料 ${source.trim().length.toLocaleString()} 字` : "尚未添加简历"}</span><span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span></div>}
             </section>
-            <section className="flow-section consent-section"><span className="step-label">步骤 3 · 确认并生成</span>
+            <section className="flow-section consent-section" id="generate-action"><span className="step-label">步骤 3 · 确认并生成</span>
               <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
+              {actionNotice && <div className="action-notice" role="alert"><strong>{actionNotice}</strong>{!modelStatus.startsWith("已连接") && <button type="button" className="text-button" onClick={() => setSettings(true)}>打开模型连接</button>}</div>}
+              {jobId && !record && <GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
+                onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/>}
               <button className="primary full generate-button" type="submit" disabled={!roleDirection}>{roleDirection ? "开始生成并核对事实" : "请先选择求职方向"}</button>
             </section>
           </div>
@@ -415,6 +431,16 @@ export default function App() {
           {record.origin === "demo" ? "虚构演示材料，不属于你的经历，不可直接投递。" : record.ai ? "AI 整理版本 · 请对照个人经历核对，审阅通过也不能代替事实确认。" : "手工整理版本 · 请核对个人事实，当前未经过 AI 审阅。"}
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
         </div>
+        {record.ai && <div className="review-dock"><details className="review-summary" key={`${record.id}-${record.revision}`}>
+          <summary><span>审阅状态</span><strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅" : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对") : "当前版本尚未审阅"}</strong></summary>
+          <div className="review-summary-body">
+            <p className="fine">编辑和预览保持可用。改正正文后请保存并重新审阅。逐项核对只打开一处，不能一次跳过事实问题。</p>
+            <ReviewIssues issues={record.ai.issues} sections={content.sections} education={content.education} disabled={interactionLocked} onResolve={index => void resolveIssue(index)}/>
+            <div className="button-row"><button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
+              <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>逐项核对并修正</button></div>
+            <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
+          </div>
+        </details></div>}
         <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
           <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
             onActiveSectionChange={setEditorSection} onChange={edit}/>
@@ -432,20 +458,6 @@ export default function App() {
           </div>
           <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin allow-scripts" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
         </section></div>
-        {record.ai && <details className="review-summary" open={reviewOpen} onToggle={event => {
-          if (event.target !== event.currentTarget) return;
-          setReviewOpen(event.currentTarget.open);
-        }}>
-          <summary><span>审阅状态</span><strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅或自行核对" : record.ai.manual_takeover ? "用户自行核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? "当前有需处理的审阅问题" : "阻断已逐项处理，可自行核对并接管") : "当前版本尚未审阅"}</strong></summary>
-          <div className="review-summary-body">
-            <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
-            {record.ai.issues.map((issue, index) => <div className="fine" key={index}><p>{issue.resolution?.action === "deleted" ? "原问题条目已删除：" : issue.resolution?.action === "source_reviewed" ? "已依据原文人工核对：" : issue.severity === "blocking" ? "需修正：" : "建议："}{issue.message}</p>
-              {issue.resolution?.explanation && <p>核对说明：{issue.resolution.explanation}</p>}
-              {unresolvedBlocking(issue) && <button className="text-button" disabled={interactionLocked} onClick={() => void resolveIssue(index)}>依据原文处理</button>}</div>)}
-            <div className="button-row"><button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
-              <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>自行核对并接管</button></div>
-          </div>
-        </details>}
       </>}
       </div>
     </main>

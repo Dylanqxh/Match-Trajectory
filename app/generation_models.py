@@ -235,6 +235,7 @@ class GenerationInput(StrictModel):
     has_career_gap: bool = False
     execution_mode: Literal["legacy", "langgraph", "supervisor"] = "langgraph"
     edit_request: Literal["none", "shorten", "restore_headcount"] = "none"
+    lineage_id: str = Field(default="", max_length=80)
 
 
 class AnswerInput(StrictModel):

@@ -315,6 +315,11 @@ def date_keys(text: str) -> set[str]:
     return {f"{match.group(1)}-{int(match.group(2)):02d}" for match in _DATE_TOKEN.finditer(text or "")}
 
 
+def comparison_text(text: str) -> str:
+    """Drop year-month dates and true ordinals before quantity comparison."""
+    return _ORDINAL_TOKEN.sub(" ", _DATE_TOKEN.sub(" ", text or ""))
+
+
 def metric_tokens(text: str) -> list[str]:
     """Digits that assert a measurement. Dates and list ordinals are not metrics."""
     without_dates = _DATE_TOKEN.sub(" ", text or "")

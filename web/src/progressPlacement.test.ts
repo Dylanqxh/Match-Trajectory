@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recoveryCopy } from "./GenerationPanel";
-import { isEditingOutside, nextProgressFocus } from "./progressPlacement";
+import { isEditingOutside, modelPreflight, nextProgressFocus } from "./progressPlacement";
 
 describe("progress placement", () => {
   it("scrolls a deep-scrolled submit into view and focuses the title once", () => {
@@ -32,6 +32,11 @@ describe("progress placement", () => {
     expect(failed.focus).toBe("retry");
     const editingFailure = nextProgressFocus({ reason: "failed", inView: false, editing: true, followupUsed: false, outcomeFocused: "" });
     expect(editingFailure.focus).toBe("none");
+  });
+
+  it("refuses to create a job when the model is not connected", () => {
+    expect(modelPreflight(false)).toEqual({ createJob: false, notice: "尚未连接模型，不会创建生成任务。材料仍留在这里。" });
+    expect(modelPreflight(true).createJob).toBe(true);
   });
 
   it("uses stage-specific recovery copy before a draft exists", () => {

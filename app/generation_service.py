@@ -82,9 +82,12 @@ class GenerationService:
             raise ValueError("请先在模型连接中测试工具调用能力，再启用智能修正策略")
         if inputs.source_text and not inputs.send_materials:
             raise ValueError("请先确认将材料发送给所选模型服务")
+        if inputs.source_text and (not self.registry.current or self.registry.current not in self.registry._configs):
+            raise ValueError("尚未连接模型，不会创建生成任务。请先打开模型连接。")
+        lineage_extra = self._retry_lineage(inputs.lineage_id) if inputs.source_text and inputs.lineage_id else {}
         config = self.registry.get(self.registry.current) if inputs.source_text else None
         skill = load_skill(inputs.target_role, inputs.career_stage, inputs.has_career_gap, inputs.role_direction)
-        extra = None if inputs.source_text else {"state": "ready", "framework": True,
+        extra = lineage_extra if inputs.source_text else {"state": "ready", "framework": True,
                                                 "error": "当前只有目标，没有个人材料。请补充课程、实践、作品或工作片段后重新生成。"}
         evidence = [e.model_dump() for e in build_evidence(inputs.source_text)]
         for row in inputs.education:
@@ -95,6 +98,28 @@ class GenerationService:
                                skill, evidence, extra=extra)
         self.wake()
         return job
+
+    def _retry_lineage(self, lineage_id: str) -> dict:
+        import json
+
+        from sqlalchemy import select
+
+        from app.jobs import job_rows
+
+        matched = []
+        with self.store.engine.connect() as connection:
+            rows = connection.execute(select(job_rows.c.data)).scalars().all()
+        for raw in rows:
+            job = json.loads(raw)
+            if job.get("deleted") or job.get("lineage_id") != lineage_id:
+                continue
+            matched.append(job)
+        if not matched:
+            raise ValueError("重试标识不存在，不会并入其他任务")
+        newest = max(matched, key=lambda job: job.get("created_at") or "")
+        if newest.get("state") not in {"failed", "interrupted"}:
+            raise ValueError("只能重试同一次尚未成功的任务，不会并入其他简历")
+        return {"lineage_id": lineage_id, "group_id": newest.get("group_id") or newest["id"]}
 
     def answer(self, job_id, payload):
         answer = AnswerInput.model_validate(payload)

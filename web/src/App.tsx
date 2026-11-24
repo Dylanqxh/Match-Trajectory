@@ -17,13 +17,14 @@ import { ReviewIssues } from "./reviewIssues";
 import { modelPreflight } from "./progressPlacement";
 import { buildGenerationSource } from "./materialSource";
 import { resolveWorkspaceView } from "./workspaceView";
-import { completionFocusId, DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
+import { completionFocusId, DocumentView } from "./DocumentViewToolbar";
+import { DocumentWorkspaceControls } from "./DocumentWorkspaceControls";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
-export function preferredAgentCollapsed(hasResume: boolean, pinnedCollapsed: boolean | null): boolean {
+export function preferredAgentCollapsed(_hasResume: boolean, pinnedCollapsed: boolean | null): boolean {
   if (pinnedCollapsed !== null) return pinnedCollapsed;
-  return !hasResume;
+  return true;
 }
 
 export function activeAgentTarget(selectedJob: GenerationSummary | undefined, record: Resume | null,
@@ -374,6 +375,13 @@ export default function App() {
   const selectedJob = jobId ? jobs.find(row => row.id === jobId) : undefined;
   const workspaceView = resolveWorkspaceView(Boolean(record), selectedJob, jobId);
   const agentTarget = activeAgentTarget(selectedJob, record, list, dirty);
+  const documentReviewStatus = !record?.ai ? undefined
+    : dirty ? "内容已修改，需要重新审阅"
+      : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告"
+        : record.ai.review_status === "passed" ? "当前版本事实审阅通过"
+          : record.ai.review_status === "blocked"
+            ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对")
+            : "当前版本尚未审阅";
   return <div className={`app-shell${workspaceView === "document" ? " workbench-open" : ""}`}>
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
@@ -481,18 +489,17 @@ export default function App() {
           {record.origin === "demo" ? "虚构演示材料，不属于你的经历，不可直接投递。" : record.ai ? "AI 整理版本 · 请对照个人经历核对，审阅通过也不能代替事实确认。" : "手工整理版本 · 请核对个人事实，当前未经过 AI 审阅。"}
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
         </div>
-        {record.ai && <button type="button" className="review-entry" onClick={() => setReviewModal(true)}>
-          <span>逐项核对与修正</span>
-          <strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅" : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对") : "当前版本尚未审阅"}</strong>
-          <em>打开</em>
-        </button>}
-        <div className="document-workspace-bar"><div><strong>{content.name || content.target_role || "未命名简历"}</strong><span>编辑与整页预览使用同一份内容</span></div>
-          <DocumentViewToolbar value={documentView} onChange={setDocumentView}/></div>
-        <div className={`editor-grid document-view-${documentView}`}><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
+        <div className={`editor-grid document-view-${documentView}`}><section className="document-left-pane">
+          <DocumentWorkspaceControls title={content.name || content.target_role || "未命名简历"}
+            saveStatus={`v${record.revision}${dirty ? " · 未保存" : " · 已保存"}`}
+            view={documentView} onViewChange={setDocumentView}
+            review={documentReviewStatus ? { status: documentReviewStatus, onOpen: () => setReviewModal(true) } : undefined}/>
+          <section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
           <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
             onActiveSectionChange={setEditorSection} onChange={edit}/>
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
+          </section>
         </section>
         <section className="preview-panel" id="resume-preview" tabIndex={-1}>
           <div className="preview-sheet" ref={previewBox} aria-label="一页 A4 预览">

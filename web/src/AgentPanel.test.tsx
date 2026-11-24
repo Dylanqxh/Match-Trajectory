@@ -97,9 +97,10 @@ describe("AgentPanel", () => {
     expect(target).toEqual({ type: "resume", id: "resume-1", label: "林然", revision: 4 });
   });
 
-  it("collapses to a strip when no resume is open, and expands once one exists", () => {
+  it("keeps the Agent collapsed by default so the resume workspace stays wide", () => {
     expect(preferredAgentCollapsed(false, null)).toBe(true);
-    expect(preferredAgentCollapsed(true, null)).toBe(false);
+    expect(preferredAgentCollapsed(true, null)).toBe(true);
+    expect(preferredAgentCollapsed(true, false)).toBe(false);
     expect(preferredAgentCollapsed(true, true)).toBe(true);
 
     const collapsed = renderToStaticMarkup(<AgentPanel target={null} collapsed modelReady={false}

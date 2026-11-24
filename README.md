@@ -13,6 +13,10 @@
   <img src="docs/images/hero.png" alt="Match-Trajectory 工作台：左侧简历列表，中间是编辑与 A4 预览，右侧是简历 Agent。画面使用应用内的虚构示例。" width="960">
 </p>
 
+<p align="center">
+  <img src="docs/images/workbench-a4.png" alt="虚构示例陈亦宁的简历预览：右侧固定为一整页 A4，没有内嵌滚动条；下载 PDF 和下载 Word 在这一页下方。" width="420">
+</p>
+
 ## 快速启动
 
 ### Docker Compose（推荐）

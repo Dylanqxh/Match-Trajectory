@@ -76,12 +76,13 @@ export default function App() {
   const [history, setHistory] = useState<Resume[] | null>(null);
   const [preview, setPreview] = useState("");
   const [editorSection, setEditorSection] = useState<EditorSectionKey>("basics");
-  const [scale, setScale] = useState(0.8);
   const [agentCollapsed, setAgentCollapsed] = useState(true);
   const agentPinned = useRef<boolean | null>(null);
   const [histories, setHistories] = useState<Record<string, { revision: number; origin: string; updated_at: string }[]>>({});
   const [selectedVersion, setSelectedVersion] = useState<{ resumeId: string; revision: number } | null>(null);
   const previewBox = useRef<HTMLDivElement>(null);
+  const previewFrame = useRef<HTMLIFrameElement>(null);
+  const [reviewModal, setReviewModal] = useState(false);
   const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, location: content.location, profile_note: content.profile_note, education: content.education, source, jd, careerStage, careerGap });
   const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim() || (content.location || "").trim() || (content.profile_note || "").trim()
     || careerStage !== "unspecified" || careerGap || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
@@ -141,11 +142,41 @@ export default function App() {
     return () => { clearTimeout(timer); abort.abort(); };
   }, [content, record?.id, record?.origin]);
   useEffect(() => {
-    const element = previewBox.current;
-    if (!element) return;
-    const observer = new ResizeObserver(entries => setScale(Math.min(1, entries[0].contentRect.width / 794)));
-    observer.observe(element); return () => observer.disconnect();
-  }, [record?.id]);
+    const sheet = previewBox.current;
+    const frame = previewFrame.current;
+    if (!sheet || !frame) return;
+    const fit = () => {
+      const panel = sheet.parentElement;
+      const scrolling = Boolean(panel && ["auto", "scroll"].includes(getComputedStyle(panel).overflowY));
+      if (panel && scrolling && panel.clientWidth > 0 && panel.clientHeight > 0) {
+        const ratio = 210 / 297;
+        let width = panel.clientWidth;
+        let height = width / ratio;
+        if (height > panel.clientHeight) {
+          height = panel.clientHeight;
+          width = height * ratio;
+        }
+        sheet.style.width = `${width}px`;
+        sheet.style.height = `${height}px`;
+      } else {
+        sheet.style.width = "";
+        sheet.style.height = "";
+      }
+      const doc = frame.contentDocument;
+      const contentHeight = Math.max(1123, doc?.documentElement?.scrollHeight || doc?.body?.scrollHeight || 1123);
+      const next = Math.min(sheet.clientWidth / 794, sheet.clientHeight / contentHeight);
+      const scale = Number.isFinite(next) && next > 0 ? next : 1;
+      frame.style.width = "794px";
+      frame.style.height = `${contentHeight}px`;
+      frame.style.transform = `scale(${scale})`;
+    };
+    frame.addEventListener("load", fit);
+    const observer = new ResizeObserver(fit);
+    observer.observe(sheet);
+    if (sheet.parentElement) observer.observe(sheet.parentElement);
+    const timer = window.setTimeout(fit, 60);
+    return () => { frame.removeEventListener("load", fit); observer.disconnect(); window.clearTimeout(timer); };
+  }, [preview, record?.id]);
   useEffect(() => {
     function guard(event: BeforeUnloadEvent) { if (hasUnsavedChanges) event.preventDefault(); }
     window.addEventListener("beforeunload", guard); return () => window.removeEventListener("beforeunload", guard);
@@ -431,16 +462,11 @@ export default function App() {
           {record.origin === "demo" ? "虚构演示材料，不属于你的经历，不可直接投递。" : record.ai ? "AI 整理版本 · 请对照个人经历核对，审阅通过也不能代替事实确认。" : "手工整理版本 · 请核对个人事实，当前未经过 AI 审阅。"}
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
         </div>
-        {record.ai && <div className="review-dock"><details className="review-summary" key={`${record.id}-${record.revision}`}>
-          <summary><span>审阅状态</span><strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅" : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对") : "当前版本尚未审阅"}</strong></summary>
-          <div className="review-summary-body">
-            <p className="fine">编辑和预览保持可用。改正正文后请保存并重新审阅。逐项核对只打开一处，不能一次跳过事实问题。</p>
-            <ReviewIssues issues={record.ai.issues} sections={content.sections} education={content.education} disabled={interactionLocked} onResolve={index => void resolveIssue(index)}/>
-            <div className="button-row"><button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
-              <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>逐项核对并修正</button></div>
-            <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
-          </div>
-        </details></div>}
+        {record.ai && <button type="button" className="review-entry" onClick={() => setReviewModal(true)}>
+          <span>逐项核对与修正</span>
+          <strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅" : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对") : "当前版本尚未审阅"}</strong>
+          <em>打开</em>
+        </button>}
         <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
           <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
             onActiveSectionChange={setEditorSection} onChange={edit}/>
@@ -448,15 +474,17 @@ export default function App() {
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
         </section>
         <section className="preview-panel">
-          <div className="preview-actions">
-            <div className="panel-title"><h2>简历预览</h2><span>A4 · 单栏</span></div>
+          <div className="preview-sheet" ref={previewBox} aria-label="一页 A4 预览">
+            <iframe title="简历预览" ref={previewFrame} sandbox="allow-same-origin allow-scripts" srcDoc={preview}/>
+          </div>
+          <div className="preview-downloads">
+            <div className="panel-title"><h2>下载这一页</h2><span>看完上方整页后再导出</span></div>
             <div className="export-actions" aria-label="导出当前版本">
               <button className="primary" disabled={interactionLocked} onClick={() => void download("pdf")}>下载 PDF</button>
               <button className="secondary" disabled={interactionLocked} onClick={() => void download("docx")}>下载 Word</button>
             </div>
             <p className="fine preview-export-note">导出前会先保存左侧修改。审阅提示不会阻止下载。</p>
           </div>
-          <div className="preview-box" ref={previewBox} style={{ height: 1123 * scale }}><iframe title="简历预览" sandbox="allow-same-origin allow-scripts" srcDoc={preview} style={{ transform: `scale(${scale})` }}/></div>
         </section></div>
       </>}
       </div>
@@ -471,6 +499,16 @@ export default function App() {
       if (index >= 0) { setResolution({ record: row, issueIndex: index }); setStatus("人工核对已保存，请继续处理下一项问题"); }
       else { setResolution(null); void action(() => confirmTakeover(row)); }
     }}/>}
+    {reviewModal && record?.ai && <div className="modal-backdrop" role="presentation" onClick={() => setReviewModal(false)}>
+      <div className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-modal-title" onClick={event => event.stopPropagation()}>
+        <header><h2 id="review-modal-title">逐项核对与修正</h2><button type="button" className="text-button" onClick={() => setReviewModal(false)}>关闭</button></header>
+        <p>事实问题要逐项处理，不能一次忽略。关闭后回到左侧表单和右侧整页预览。</p>
+        <ReviewIssues issues={record.ai.issues} sections={content.sections} education={content.education} disabled={interactionLocked} onResolve={index => void resolveIssue(index)}/>
+        <div className="button-row"><button className="secondary" disabled={interactionLocked} onClick={() => void recheck()}>保存并重新审阅</button>
+          <button className="text-button" disabled={interactionLocked} onClick={() => void takeover()}>逐项核对并修正</button></div>
+        <QualityReport report={record.ai.quality} stale={dirty} sections={content.sections} education={content.education}/>
+      </div>
+    </div>}
     {history && <VersionHistory rows={history} onClose={() => setHistory(null)}/>}
   </div>;
 }

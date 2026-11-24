@@ -404,3 +404,19 @@ def test_agent_api_auto_applies_and_can_undo(tmp_path, monkeypatch):
         assert undone.json()["resume"]["content"]["sections"][0]["items"][0]["text"] == "使用 Java 完成查询接口。"
     finally:
         client.__exit__(None, None, None)
+
+
+def test_deleted_generation_job_does_not_block_opening_the_resume_agent(tmp_path, monkeypatch):
+    from app.models import AIInfo, resume_hash
+
+    client, app = open_agent_client(tmp_path, monkeypatch)
+    try:
+        content = base_content()
+        info = AIInfo(job_id="missing-job", review_job_id="missing-job", review_status="blocked",
+                      content_hash=resume_hash(content), skill_version="fixture", source_map={}, issues=[])
+        record = app.state.store.create(content, "ai", source_text="使用 Java 完成查询接口。", ai=info)
+        response = client.post("/api/agent/sessions", json={"target_type": "resume", "target_id": record.id})
+        assert response.status_code == 201, response.text
+        assert "任务不存在" not in response.text
+    finally:
+        client.__exit__(None, None, None)

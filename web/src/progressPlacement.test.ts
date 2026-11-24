@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recoveryCopy } from "./GenerationPanel";
+import { recoveryCopy, stageActivity } from "./GenerationPanel";
 import { isEditingOutside, modelPreflight, nextProgressFocus } from "./progressPlacement";
 
 describe("progress placement", () => {
@@ -32,6 +32,11 @@ describe("progress placement", () => {
     expect(failed.focus).toBe("retry");
     const editingFailure = nextProgressFocus({ reason: "failed", inView: false, editing: true, followupUsed: false, outcomeFocused: "" });
     expect(editingFailure.focus).toBe("none");
+  });
+
+  it("does not say the materials are still being read while waiting for a choice", () => {
+    expect(stageActivity("waiting_input", "plan")).toBe("正在等待补充");
+    expect(stageActivity("running", "review")).toBe("正在事实审阅");
   });
 
   it("refuses to create a job when the model is not connected", () => {

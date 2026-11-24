@@ -261,8 +261,13 @@ class AgentService:
                     "source_text": job["input"].get("source_text", ""), "skill": job["skill"]}
         record = self.store.get(target.target_id)
         source_text = self.store.source_text(record.id)
+        original = None
         if record.ai:
-            original = self.jobs.get(record.ai.job_id)
+            try:
+                original = self.jobs.get(record.ai.job_id)
+            except NotFound:
+                original = None
+        if original:
             evidence = original["evidence"]
             source_map = record.ai.source_map
             job = original

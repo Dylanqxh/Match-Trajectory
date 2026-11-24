@@ -5,7 +5,15 @@ import { QualityReport } from "./QualityReport";
 import { AgentExecutionTrace } from "./executionTrace";
 import { isEditingOutside, nextProgressFocus } from "./progressPlacement";
 
-const stages: Record<string, string> = { plan: "正在阅读材料", draft: "正在写初稿", review: "正在核对", revise: "正在修改措辞", supervise: "正在决定改哪里" };
+const stages: Record<string, string> = { plan: "正在材料分析", draft: "正在简历写作", review: "正在事实审阅", revise: "正在修正", supervise: "正在主管判断" };
+
+export function stageActivity(state: string, stage: string): string {
+  if (state === "waiting_input") return "正在等待补充";
+  if (state === "queued") return "排队中";
+  if (state === "ready") return "已完成";
+  if (state === "failed" || state === "interrupted") return `停在${stages[stage] || "当前步骤"}`;
+  return stages[stage] || "整理材料";
+}
 const states: Record<string, string> = { queued: "排队中", running: "正在生成", waiting_input: "想再问你一句", ready: "初稿好了", failed: "还没有生成完", interrupted: "中途停了", cancelled: "已取消" };
 
 export function recoveryCopy(job: { draft: unknown; stage: string }): string {
@@ -133,12 +141,12 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
   const gaps = job ? [...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index) : [];
   const failure = job && ["failed", "interrupted"].includes(job.state) ? calmError(job) : "";
   return <section className="generation-panel" id="generation-progress" aria-label="AI 生成任务" ref={panelRef}>
-    <div className="panel-title"><div><span className="eyebrow">初稿</span><h2 id="generation-progress-title" tabIndex={-1} ref={titleRef}>{job?.draft ? "看看这版简历" : job?.state === "failed" ? "还没生成完" : "正在生成"}</h2></div>
+    <div className="panel-title"><div><span className="eyebrow">初稿</span><h2 id="generation-progress-title" tabIndex={-1} ref={titleRef}>{job?.state === "waiting_input" ? "等你补充一项" : job?.draft ? "看看这版简历" : job?.state === "failed" ? "还没生成完" : "正在生成"}</h2></div>
       <button className="text-button" onClick={onClose}>收起</button></div>
     {error && <p className="error" role="alert">{error}<button onClick={() => setRefresh(x => x + 1)}>刷新</button></p>}
     {!job && !error && <p className="chat-empty">正在打开这次生成…</p>}
     {job && <>
-      <div className="generation-state"><strong>{states[job.state] || "处理中"}</strong><span>{job.input.target_role} · {stages[job.stage] || "整理材料"}</span></div>
+      <div className="generation-state"><strong>{job.state === "waiting_input" ? "正在等待补充" : states[job.state] || "处理中"}</strong><span>{job.input.target_role} · {stageActivity(job.state, job.stage)}</span></div>
       <AgentExecutionTrace receipts={job.step_receipts} currentStage={job.stage} jobState={job.state}/>
       {failure && job && <div className="generation-recover"><strong>{failure}</strong><p>{recoveryCopy(job)}</p></div>}
       {job.stop_reason && !failure && <p className="notice">{job.stop_reason}</p>}

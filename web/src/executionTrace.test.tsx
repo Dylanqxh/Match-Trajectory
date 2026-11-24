@@ -17,6 +17,23 @@ describe("execution graph", () => {
     expect(WAIT_RESUME_EDGES.some(edge => edge[0] === "wait" && edge[1] === "draft" && edge[2].includes("回答后"))).toBe(true);
   });
 
+  it("keeps a follow-up wait from pretending the draft is already written", () => {
+    const waiting = buildExecutionGraph([
+      { step: "plan:0", next_stage: "plan", state: "waiting_input", calls: 1 },
+    ], "plan", "waiting_input");
+    expect(waiting.statusLine).toBe("正在等待补充");
+    expect(waiting.nodes.find(node => node.id === "wait")?.status).toBe("running");
+    expect(waiting.nodes.find(node => node.id === "draft")?.status).toBe("pending");
+    expect(waiting.nodes.find(node => node.id === "review")?.status).toBe("pending");
+
+    const inconsistent = buildExecutionGraph([
+      { step: "plan:0", next_stage: "draft", state: "running", calls: 1 },
+      { step: "draft:0", next_stage: "review", state: "running", calls: 2 },
+    ], "plan", "waiting_input");
+    expect(inconsistent.nodes.find(node => node.id === "draft")?.status).toBe("pending");
+    expect(inconsistent.statusLine).toBe("正在等待补充");
+  });
+
   it("names the real roles and keeps an unused supervisor secondary", () => {
     const graph = buildExecutionGraph([
       { step: "plan:0", next_stage: "draft", state: "running", calls: 1 },

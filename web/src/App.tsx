@@ -6,7 +6,7 @@ import { ManualReview } from "./ManualReview";
 import { EducationFields } from "./EducationFields";
 import { QualityReport } from "./QualityReport";
 import { AgentPanel } from "./AgentPanel";
-import { MaterialIntake } from "./MaterialIntake";
+import { MaterialPath, MaterialSourcePanel } from "./MaterialSourcePanel";
 import { RoleDirectionPicker } from "./RoleDirectionPicker";
 import { RoleDirection } from "./roleDirections";
 import { ResumeEditor } from "./ResumeEditor";
@@ -15,6 +15,7 @@ import { VersionHistory } from "./VersionHistory";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { ReviewIssues } from "./reviewIssues";
 import { modelPreflight } from "./progressPlacement";
+import { buildGenerationSource } from "./materialSource";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -46,6 +47,7 @@ export default function App() {
   const [content, setContent] = useState<Content>(emptyContent);
   const [source, setSource] = useState("");
   const [jd, setJd] = useState("");
+  const [materialPath, setMaterialPath] = useState<MaterialPath>("upload");
   const [sendMaterials, setSendMaterials] = useState(false);
   const [allowQuestions, setAllowQuestions] = useState(true);
   const [roleDirection, setRoleDirection] = useState<RoleDirection | "">("");
@@ -83,9 +85,10 @@ export default function App() {
   const previewBox = useRef<HTMLDivElement>(null);
   const previewFrame = useRef<HTMLIFrameElement>(null);
   const [reviewModal, setReviewModal] = useState(false);
-  const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, location: content.location, profile_note: content.profile_note, education: content.education, source, jd, careerStage, careerGap });
-  const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim() || (content.location || "").trim() || (content.profile_note || "").trim()
-    || careerStage !== "unspecified" || careerGap || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
+  const formKey = JSON.stringify({ content, source, jd, careerStage, careerGap });
+  const generationSource = buildGenerationSource(source, content);
+  const hasUnsavedChanges = dirty || (!record && Boolean(generationSource.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim() || (content.location || "").trim() || (content.profile_note || "").trim()
+    || careerStage !== "unspecified" || careerGap) && formKey !== savedInput.current);
 
   useEffect(() => {
     let stopped = false;
@@ -191,7 +194,7 @@ export default function App() {
       return next;
     });
   }
-  const hasMaterials = Boolean(source.trim() || jd.trim());
+  const hasMaterials = Boolean(generationSource.trim() || jd.trim());
   const createStep = !roleDirection ? 1 : hasMaterials ? 3 : 2;
 
   function edit(next: Content) { if (deletionInFlight.current) return; setContent(next); setDirty(true); setStatus("有未保存的修改"); }
@@ -233,14 +236,15 @@ export default function App() {
     const preflight = modelPreflight(modelStatus.startsWith("已连接"));
     if (!preflight.createJob) { setActionNotice(preflight.notice); revealAction(); return; }
     if (!roleDirection) { setActionNotice("请先选择这份简历的求职方向"); revealAction(); return; }
-    const covered = Boolean(source.trim() || jd.trim() || content.name.trim());
-    if (!covered) { setActionNotice("请先上传一份简历或 JD，或在下面粘贴经历"); revealAction(); return; }
-    if ((source.trim() || jd.trim()) && !sendMaterials) { setActionNotice("请先确认将材料和 JD 发送给所选模型服务"); revealAction(); return; }
+    const covered = Boolean(generationSource.trim());
+    if (!covered) { setActionNotice("请先上传或粘贴经历，或使用空白表单填写教育、工作、项目等真实材料"); revealAction(); return; }
+    if (generationSource.length > 20000) { setActionNotice(`合并后的材料有 ${generationSource.length.toLocaleString()} 字，超过 20,000 字上限。请精简上传文字或表单条目后再生成。`); revealAction(); return; }
+    if ((generationSource.trim() || jd.trim()) && !sendMaterials) { setActionNotice("请先确认将材料和 JD 发送给所选模型服务"); revealAction(); return; }
     setBusy(true); setError(""); setActionNotice("");
     try {
       const payload = { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role,
         role_direction: roleDirection,
-        education: clean(content).education, source_text: source, jd, career_stage: careerStage, has_career_gap: careerGap,
+        education: clean(content).education, source_text: generationSource, jd, career_stage: careerStage, has_career_gap: careerGap,
         execution_mode: useSupervisor ? "supervisor" : "langgraph", allow_questions: allowQuestions, send_materials: sendMaterials };
       const key = JSON.stringify(payload);
       if (generationRequest.current?.key !== key) generationRequest.current = { key, id: crypto.randomUUID() };
@@ -299,7 +303,7 @@ export default function App() {
       setResolution(null); setHistory(null);
       if (selectedRecordId.current === row.id) {
         setRecord(null); setContent(emptyContent); setDirty(false); setPreview(""); setSource(""); setJd("");
-        setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); savedInput.current = ""; generationRequest.current = null;
+        setMaterialPath("upload"); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); savedInput.current = ""; generationRequest.current = null;
         localStorage.removeItem("mt_resume_id");
       }
       const remainingJobs = await api<GenerationSummary[]>("/api/generation-jobs"); setJobs(remainingJobs);
@@ -370,7 +374,7 @@ export default function App() {
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={interactionLocked} onClick={() => {
-        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; retryLineage.current = null; setActionNotice(""); showJob(null); localStorage.removeItem("mt_resume_id"); }
+        if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setMaterialPath("upload"); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; retryLineage.current = null; setActionNotice(""); showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
       <WorkspaceSidebar resumes={list} jobs={jobs} versions={histories} selectedResumeId={record?.id || null} selectedJobId={jobId}
         selectedVersion={selectedVersion} disabled={interactionLocked}
@@ -422,13 +426,17 @@ export default function App() {
               <RoleDirectionPicker value={roleDirection} onChange={setRoleDirection}/>
               <label className="target-role-field">目标岗位<input list="roles" value={content.target_role} maxLength={80} onChange={e => setContent({ ...content, target_role: e.target.value })} placeholder="例如：推荐算法工程师（可稍后补）"/><datalist id="roles">{roles.map(role => <option value={role} key={role}/>)}</datalist></label>
             </section>
-            <section className="flow-section"><span className="step-label">步骤 2 · 放入材料</span>
-              <MaterialIntake busy={interactionLocked} onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))} onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
-              <label>或直接粘贴经历<textarea aria-label="现有材料" rows={6} maxLength={20000} value={source} onChange={e => setSource(e.target.value)} placeholder="不上传也可以把经历粘贴在这里。上传后的文字会出现在这里，可再改。"/></label>
-              <div className="field-help">{source.length.toLocaleString()} / 20,000 字 · 本机保存</div>
-              <label>岗位 JD（可选）<textarea aria-label="岗位 JD" rows={4} maxLength={8000} value={jd} onChange={e => setJd(e.target.value)} placeholder="没有具体岗位可以留空"/></label>
-              {recognized && <p className="notice material-recognized">{recognized}</p>}
-              {(source.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料"><span>{source.trim() ? `简历材料 ${source.trim().length.toLocaleString()} 字` : "尚未添加简历"}</span><span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span></div>}
+            <section className="flow-section material-source-section">
+              <MaterialSourcePanel path={materialPath} busy={interactionLocked} content={content} source={source} jd={jd}
+                recognized={recognized} editorSection={editorSection} onPathChange={setMaterialPath}
+                onContentChange={setContent} onSourceChange={setSource} onJdChange={setJd}
+                onEditorSectionChange={setEditorSection}
+                onResume={text => void useResume(text).catch(reason => setError((reason as Error).message))}
+                onJd={text => void useJd(text).catch(reason => setError((reason as Error).message))}/>
+              {(generationSource.trim() || jd.trim()) && <div className="material-status" aria-label="已添加材料">
+                <span>{generationSource.trim() ? `生成材料 ${generationSource.trim().length.toLocaleString()} 字` : "尚未添加经历材料"}</span>
+                <span>{jd.trim() ? `岗位 JD ${jd.trim().length.toLocaleString()} 字` : "未添加 JD（可选）"}</span>
+              </div>}
             </section>
             <section className="flow-section consent-section" id="generate-action"><span className="step-label">步骤 3 · 确认并生成</span>
               <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
@@ -453,7 +461,7 @@ export default function App() {
               <p className="fine">多项问题需要取舍时，由模型安排修正重点。可能增加调用，仍计入8次上限；请先在“模型连接”中测试工具调用能力。</p>
             </details>
             <button className="text-button" type="button" onClick={() => void action(async () => {
-              adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role, education: clean(content).education, source_text: source })); await refreshList();
+              adopt(await api<Resume>("/api/resumes", { name: content.name, contact: content.contact, location: content.location || "", profile_note: content.profile_note || "", target_role: content.target_role, education: clean(content).education, source_text: generationSource })); await refreshList();
             })}>先不生成，进入编辑器 →</button>
           </section>
         </fieldset></form>

@@ -4,16 +4,16 @@ function period(start?: string, end?: string): string {
   return [start?.trim(), end?.trim()].filter(Boolean).join(" — ");
 }
 
-function structuredMaterial(content: Content): string {
+function structuredMaterial(content: Content, includeEducation: boolean): string {
   const blocks: string[] = [];
   const summary = content.summary.trim();
   if (summary) blocks.push(`个人简介\n${summary}`);
 
-  const education = (content.education || []).flatMap(row => {
+  const education = includeEducation ? (content.education || []).flatMap(row => {
     const line = [row.school.trim(), row.degree.trim(), row.major.trim(), period(row.start_date, row.end_date)]
       .filter(Boolean).join(" · ");
     return line ? [line] : [];
-  });
+  }) : [];
   if (education.length) blocks.push(`教育背景\n${education.join("\n")}`);
 
   for (const section of content.sections || []) {
@@ -28,9 +28,10 @@ function structuredMaterial(content: Content): string {
 }
 
 export function buildGenerationSource(uploadedText: string, content: Content): string {
-  const blocks: string[] = [];
   const uploaded = uploadedText.trim();
-  const structured = structuredMaterial(content);
+  const structured = structuredMaterial(content, !uploaded);
+  if (uploaded && !structured) return uploaded;
+  const blocks: string[] = [];
   if (uploaded) blocks.push(`已有简历 / 粘贴材料\n${uploaded}`);
   if (structured) blocks.push(`结构化填写\n${structured}`);
   return blocks.join("\n\n");

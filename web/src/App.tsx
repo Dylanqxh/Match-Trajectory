@@ -17,7 +17,7 @@ import { ReviewIssues } from "./reviewIssues";
 import { modelPreflight } from "./progressPlacement";
 import { buildGenerationSource } from "./materialSource";
 import { resolveWorkspaceView } from "./workspaceView";
-import { DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
+import { completionFocusId, DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -347,7 +347,7 @@ export default function App() {
         if (!deletionInFlight.current && selectedJobId.current === job.id) {
           adopt(row); showJob(null); void refreshList(); void refreshJobs();
           setStatus("简历已生成并自动进入编辑器，请直接修改或导出");
-          requestAnimationFrame(() => document.getElementById("resume-draft-title")?.focus());
+          requestAnimationFrame(() => document.getElementById(completionFocusId(documentView))?.focus());
         }
       }).catch(error => setError((error as Error).message));
     }
@@ -494,7 +494,7 @@ export default function App() {
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>
             <button className="text-button" disabled={interactionLocked} onClick={() => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${record.id}`))); }}>重新载入</button></div>
         </section>
-        <section className="preview-panel">
+        <section className="preview-panel" id="resume-preview" tabIndex={-1}>
           <div className="preview-sheet" ref={previewBox} aria-label="一页 A4 预览">
             <iframe title="简历预览" ref={previewFrame} sandbox="allow-same-origin allow-scripts" srcDoc={preview}/>
           </div>

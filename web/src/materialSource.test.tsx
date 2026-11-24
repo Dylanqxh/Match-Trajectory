@@ -31,12 +31,29 @@ describe("material source", () => {
 
     expect(text).toContain("已有简历 / 粘贴材料\n旧简历原文：负责接口联调。");
     expect(text).toContain("结构化填写");
-    expect(text).toContain("海岚大学 · 本科 · 软件工程 · 2022-09 — 2026-06");
     expect(text).toContain("星河科技 · 后端实习生 · 2025-06 — 2025-09");
     expect(text).toContain("- 完成订单查询接口");
     expect(text).toContain("个人简介\n关注可靠交付");
     expect(text).not.toContain("lin@example.com");
     expect(text).not.toContain("item-empty");
+  });
+
+  it("keeps education as source material when the structured form is the only route", () => {
+    const text = buildGenerationSource("", { ...content, summary: "", sections: [] });
+
+    expect(text).toContain("结构化填写");
+    expect(text).toContain("海岚大学 · 本科 · 软件工程 · 2022-09 — 2026-06");
+  });
+
+  it("does not make a valid maximum-length upload overflow when education was parsed from it", () => {
+    const uploaded = "字".repeat(20000);
+    const parsed: Content = { ...content, summary: "", sections: [] };
+
+    const text = buildGenerationSource(uploaded, parsed);
+
+    expect(text).toBe(uploaded);
+    expect(text).toHaveLength(20000);
+    expect(text).not.toContain("海岚大学");
   });
 
   it("makes upload and blank-form routes equal choices while showing the selected editor", () => {
@@ -67,6 +84,8 @@ describe("material source", () => {
     expect(upload).toContain("或直接粘贴经历");
     expect(upload).not.toContain("aria-label=\"简历填写板块\"");
     expect(form).toContain("aria-label=\"简历填写板块\"");
+    expect(form).toContain("aria-label=\"教育背景表单\"");
+    expect(form).not.toContain("aria-label=\"个人简介\"");
     expect(form).not.toContain("或直接粘贴经历");
   });
 });

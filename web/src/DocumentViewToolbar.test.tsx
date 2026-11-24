@@ -1,7 +1,7 @@
 import { Children, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
+import { completionFocusId, DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
 
 describe("DocumentViewToolbar", () => {
   it("offers split, preview, and edit views with one current choice", () => {
@@ -24,5 +24,11 @@ describe("DocumentViewToolbar", () => {
     expect(selected).toBe("preview");
     buttons[2].props.onClick();
     expect(selected).toBe("edit");
+  });
+
+  it("focuses a visible region when generation opens the document", () => {
+    expect(completionFocusId("preview")).toBe("resume-preview");
+    expect(completionFocusId("split")).toBe("resume-draft-title");
+    expect(completionFocusId("edit")).toBe("resume-draft-title");
   });
 });

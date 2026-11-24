@@ -53,7 +53,7 @@ export function MaterialSourcePanel({ path, busy, content, source, jd, recognize
     </div> : <div className="material-path-content form-material-path">
       <div className="structured-material-note"><strong>不需要先写成长文</strong><span>按板块填写即可；生成时会和上传材料一起整理，不会清空另一条路径。</span></div>
       <ResumeEditor content={content} activeSection={editorSection} disabled={busy}
-        onActiveSectionChange={onEditorSectionChange} onChange={onContentChange}/>
+        onActiveSectionChange={onEditorSectionChange} onChange={onContentChange} materialOnly/>
     </div>}
 
     <div className="jd-material-block">

@@ -1,5 +1,9 @@
 export type DocumentView = "split" | "preview" | "edit";
 
+export function completionFocusId(view: DocumentView): "resume-preview" | "resume-draft-title" {
+  return view === "preview" ? "resume-preview" : "resume-draft-title";
+}
+
 const options: { value: DocumentView; label: string; hint: string }[] = [
   { value: "split", label: "并排查看", hint: "边改边看" },
   { value: "preview", label: "专注预览", hint: "放大整页" },

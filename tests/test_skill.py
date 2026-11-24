@@ -31,6 +31,26 @@ def test_pinned_role_keeps_the_frozen_skill_when_direction_changes():
     assert "references/roles/algorithm.md" in skill.resources
 
 
+def test_stage_load_keeps_editorial_and_role_files_without_rejected_rules():
+    from app.skill import load_skill
+
+    bundle = load_skill("算法工程师", role_direction="algorithm")
+    assert "references/editorial.md" in bundle.stage_resources["draft"]
+    assert "references/editorial.md" in bundle.stage_resources["revise"]
+    assert "references/editorial.md" not in bundle.stage_resources["plan"]
+    assert "references/editorial.md" not in bundle.stage_resources["review"]
+    for stage, paths in bundle.stage_resources.items():
+        assert f"references/roles/{bundle.role}.md" in paths
+        assert "references/writing-sources.md" not in paths
+        assert "writing-sources" not in bundle.stage_instructions[stage]
+        assert "Paramchoudhary/ResumeSkills" not in bundle.stage_instructions[stage]
+    draft = bundle.stage_instructions["draft"]
+    assert "不查学校官网" in draft
+    assert "不要推算出材料没写的百分点差值" in draft
+    assert "不要加「负责业务」「工作职责」" in draft
+    assert "也不能从正文自动抽出来" in draft
+
+
 def test_source_ranges_preserve_original_text_and_restrictions():
     from app.skill import build_evidence
 

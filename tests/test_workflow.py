@@ -48,8 +48,8 @@ def setup(tmp_path, outputs):
 
 
 def request(**kwargs):
-    return GenerationInput(request_id="request-0001", target_role="Java 后端", name="测试用户", contact="me@example.com",
-                           source_text=kwargs.pop("source_text", MATERIAL), send_materials=True, **kwargs)
+    return GenerationInput(request_id=kwargs.pop("request_id", "request-0001"), target_role="Java 后端", name="测试用户",
+                           contact="me@example.com", source_text=kwargs.pop("source_text", MATERIAL), send_materials=True, **kwargs)
 
 
 def test_generation_is_idempotent_and_ready_candidate_is_adopted_automatically(tmp_path):
@@ -673,3 +673,132 @@ def test_editing_invalidates_quality_without_overwriting_original_job_report(tmp
     changed = store.save(record.id, record.revision, content)
     assert changed.ai.quality is None and changed.ai.review_status == "unreviewed"
     assert jobs.get(job["id"])["review"]["quality"]["status"] == "ready"
+
+
+def _choice(label, option_id="a", recommended=True):
+    return {"id": option_id, "label": label, "recommended": recommended, "fact_ids": ["e1"]}
+
+
+def _ask(label):
+    return {"decision": "ask", "selected_fact_ids": ["e1"], "questions": [{
+        "id": "q1", "kind": "choice", "text": "已有材料里，先看哪一段？",
+        "options": [_choice(label), _choice("保持材料原来的顺序", "b", False)],
+    }]}
+
+
+def test_invented_choice_metric_retries_then_uses_editorial_options(tmp_path):
+    from app.models import ResumeContent
+
+    source = "使用 Java 完成查询接口。"
+    runner, jobs, store, _, model = setup(tmp_path, [_ask("点击率提升 20%"), _ask("点击率提升 20%")])
+    kept = store.create(ResumeContent(name="旧简历", target_role="后端", contact=""), "manual")
+    job = runner.submit(request(source_text=source, request_id="choice-editorial"))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "waiting_input"
+    assert finished["error"] == ""
+    assert finished["draft"] is None
+    assert finished["calls"] == 2
+    assert [call[0] for call in model.calls] == ["plan", "plan"]
+    options = finished["plan"]["questions"][0]["options"]
+    assert 2 <= len(options) <= 4
+    assert sum(bool(option["recommended"]) for option in options) == 1
+    shown = json.dumps(finished["plan"], ensure_ascii=False)
+    assert "20%" not in shown and "20" not in shown
+    assert finished["input"]["source_text"] == source
+    assert [row["id"] for row in store.list()] == [kept.id]
+    assert jobs.list()[0]["group_id"] == finished["group_id"]
+
+
+def test_date_punctuation_and_ordinals_do_not_fail_the_job(tmp_path):
+    runner, jobs, _, _, model = setup(tmp_path, [
+        _ask("先写 2025.03 的接口工作"),
+        _ask("先写第1段已有经历"),
+    ])
+    dated = runner.submit(request(source_text="2025-03 使用 Java 完成查询接口。", request_id="choice-date"))
+    asyncio.run(runner.run_one())
+    assert jobs.get(dated["id"])["state"] == "waiting_input"
+    assert jobs.get(dated["id"])["calls"] == 1
+    assert jobs.get(dated["id"])["error"] == ""
+    ordinal = runner.submit(request(source_text="使用 Java 完成查询接口。", request_id="choice-ordinal"))
+    asyncio.run(runner.run_one())
+    assert jobs.get(ordinal["id"])["state"] == "waiting_input"
+    assert jobs.get(ordinal["id"])["calls"] == 1
+    assert model.calls[0][0] == "plan" and model.calls[1][0] == "plan"
+
+
+def test_skill_example_numbers_degrade_instead_of_failing(tmp_path):
+    example = _ask("先写 Recall 从 0.31 到 0.36")
+    runner, jobs, _, _, model = setup(tmp_path, [example, example])
+    job = runner.submit(request(source_text="使用 Java 完成查询接口。", request_id="choice-example"))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "waiting_input"
+    assert finished["error"] == ""
+    assert finished["calls"] == 2
+    blob = json.dumps({"plan": finished["plan"], "draft": finished["draft"]}, ensure_ascii=False)
+    assert "0.31" not in blob and "0.36" not in blob
+    assert [call[0] for call in model.calls] == ["plan", "plan"]
+
+
+def test_exhausted_illegal_choices_skip_followups_and_still_draft(tmp_path, monkeypatch):
+    from app.gates import ungrounded_choice as real
+
+    def fake(plan, evidence):
+        questions = getattr(plan, "questions", None) or []
+        if questions and getattr(questions[0], "id", "") == "editorial-order":
+            return "选择题不能写出证据里没有的数字"
+        return real(plan, evidence)
+
+    monkeypatch.setattr("app.gates.ungrounded_choice", fake)
+    bad = _ask("点击率提升 20%")
+    runner, jobs, _, _, model = setup(tmp_path, [bad, bad, DRAFT, PASS])
+    job = runner.submit(request(request_id="choice-skip-draft"))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "ready"
+    assert finished["error"] == ""
+    assert "20%" not in json.dumps(finished["draft"], ensure_ascii=False)
+    assert "20%" not in json.dumps(finished.get("plan"), ensure_ascii=False)
+    assert [call[0] for call in model.calls] == ["plan", "plan", "draft", "review"]
+    assert finished["input"]["source_text"] == MATERIAL
+
+
+def test_unrelated_plan_failure_keeps_materials_and_versions(tmp_path):
+    from app.model_client import ModelOutputError
+    from app.models import ResumeContent
+
+    runner, jobs, store, _, _ = setup(tmp_path, [ModelOutputError("结构不匹配"), ModelOutputError("结构不匹配")])
+    kept = store.create(ResumeContent(name="旧简历", target_role="后端", contact=""), "manual")
+    job = runner.submit(request(request_id="plan-other-failure"))
+    asyncio.run(runner.run_one())
+    finished = jobs.get(job["id"])
+    assert finished["state"] == "failed"
+    assert finished["draft"] is None
+    assert "选择题" not in finished["error"]
+    assert finished["input"]["source_text"] == MATERIAL
+    assert kept.id in {row["id"] for row in store.list()}
+
+
+def test_group_id_persists_for_inflight_and_failed_jobs(tmp_path):
+    from types import SimpleNamespace
+
+    from app.jobs import JobStore
+
+    _, jobs, store, _, _ = setup(tmp_path, [])
+    skill = SimpleNamespace(role="general", version="v", instructions="", resources=[], stage_resources={}, stage_instructions={})
+
+    def inputs(request_id):
+        return {"request_id": request_id, "name": "", "contact": "", "target_role": "后端", "source_text": "真实材料",
+                "jd": "", "education": [], "career_stage": "unspecified", "has_career_gap": False,
+                "execution_mode": "langgraph", "allow_questions": True, "send_materials": True, "edit_request": "none"}
+
+    failed = jobs.create(inputs("group-failed"), "config", {}, skill, [],
+                         extra={"state": "failed", "stage": "plan", "error": "其他错误", "group_id": "batch-1"})
+    running = jobs.create(inputs("group-running"), "config", {}, skill, [],
+                          extra={"state": "running", "stage": "draft", "group_id": "batch-1"})
+    reloaded = {row["id"]: row for row in JobStore(store).list()}
+    assert reloaded[failed["id"]]["group_id"] == "batch-1"
+    assert reloaded[running["id"]]["group_id"] == "batch-1"
+    assert reloaded[failed["id"]]["resume_id"] is None
+    assert store.list() == []

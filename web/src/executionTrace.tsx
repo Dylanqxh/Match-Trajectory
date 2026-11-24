@@ -6,59 +6,104 @@ export interface StepReceipt {
   calls: number;
 }
 
-export interface AgentTraceItem {
+export type NodeStatus = "pending" | "running" | "success" | "failed" | "skipped";
+
+export interface ExecutionNode {
   id: string;
-  icon: string;
-  agent: string;
-  action: string;
-  detail: string;
-  status: "done" | "running";
+  label: string;
+  status: NodeStatus;
 }
 
-const roles: Record<string, { icon: string; agent: string; action: string }> = {
-  supervise: { icon: "🧭", agent: "调度 Agent", action: "判断下一步与修改范围" },
-  plan: { icon: "🔎", agent: "材料分析 Agent", action: "提取事实并规划简历结构" },
-  draft: { icon: "✍", agent: "简历写作 Agent", action: "依据原文生成岗位化表达" },
-  review: { icon: "🛡", agent: "事实审阅 Agent", action: "核对引用、事实与写作质量" },
-  revise: { icon: "✨", agent: "修改优化 Agent", action: "修正审阅发现的问题" },
+export interface ExecutionGraph {
+  nodes: ExecutionNode[];
+  successCount: number;
+  statusLine: string;
+}
+
+const order = ["plan", "wait", "draft", "review", "revise", "supervise", "done"] as const;
+const labels: Record<(typeof order)[number], string> = {
+  plan: "计划", wait: "补问", draft: "起草", review: "审阅", revise: "修正", supervise: "主管", done: "完成",
 };
+const runningLine: Record<string, string> = {
+  plan: "正在阅读材料", wait: "正在等待补充", draft: "正在写初稿", review: "正在审阅",
+  revise: "正在修改措辞", supervise: "正在决定是否修正", done: "已完成",
+};
+const statusText: Record<NodeStatus, string> = {
+  pending: "待进行", running: "进行中", success: "已完成", failed: "未通过", skipped: "未使用",
+};
+
+/** Edges that exist in phases.ALLOWED, plus the wait fork the plan stage can take. */
+export const EXECUTION_EDGES: ReadonlyArray<readonly [string, string]> = [
+  ["plan", "plan"], ["plan", "draft"], ["plan", "wait"],
+  ["draft", "draft"], ["draft", "review"],
+  ["review", "review"], ["review", "revise"], ["review", "supervise"], ["review", "done"],
+  ["revise", "revise"], ["revise", "review"],
+  ["supervise", "supervise"], ["supervise", "revise"], ["supervise", "done"],
+];
 
 function stageOf(receipt: StepReceipt): string {
   return receipt.step.split(":", 1)[0];
 }
 
-export function buildAgentTrace(receipts: StepReceipt[] = [], currentStage = "", jobState = ""): AgentTraceItem[] {
-  const seen = new Set<string>();
-  const result: AgentTraceItem[] = [];
+export function buildExecutionGraph(receipts: StepReceipt[] = [], currentStage = "", jobState = ""): ExecutionGraph {
+  const completed = new Set<string>();
+  let sawWait = false;
+  let sawSupervise = false;
   for (const receipt of receipts) {
-    const id = receipt.step_id || `${receipt.step}:${receipt.next_stage}:${receipt.calls}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const role = roles[stageOf(receipt)];
-    if (!role) continue;
-    result.push({ id, ...role, detail: `${role.action} · 第 ${receipt.calls} 次模型调用`, status: "done" });
+    const stage = stageOf(receipt);
+    if (stage === "supervise") sawSupervise = true;
+    if (receipt.state === "waiting_input" || receipt.next_stage === "wait") sawWait = true;
+    if (stage && (receipt.next_stage !== stage || receipt.state === "waiting_input" || receipt.state === "ready")) {
+      completed.add(stage);
+    }
+    if (receipt.state === "ready") completed.add("done");
   }
-  const current = roles[currentStage];
-  if (current && ["queued", "running", "waiting_input"].includes(jobState)) {
-    result.push({
-      id: `current:${currentStage}`,
-      ...current,
-      detail: jobState === "waiting_input" ? "等待你补充后继续" : current.action,
-      status: "running",
-    });
+  if (sawWait && jobState !== "waiting_input") completed.add("wait");
+
+  const status = Object.fromEntries(order.map(id => [id, "pending"])) as Record<string, NodeStatus>;
+  if (jobState === "waiting_input") {
+    status.wait = "running";
+    status.plan = "success";
+  } else if (jobState === "queued" || jobState === "running") {
+    if (currentStage in status) status[currentStage] = "running";
+  } else if (jobState === "failed" || jobState === "interrupted") {
+    if (currentStage in status && currentStage !== "done") status[currentStage] = "failed";
+  } else if (jobState === "ready") {
+    status.done = "success";
   }
-  return result;
+  for (const id of completed) {
+    if (status[id] === "pending") status[id] = "success";
+  }
+  if ((jobState === "queued" || jobState === "running") && currentStage in status) status[currentStage] = "running";
+  if (!sawSupervise && status.supervise !== "running" && status.supervise !== "failed") status.supervise = "skipped";
+  if (!sawWait && status.wait === "pending") {
+    const movedOn = ["draft", "review", "revise", "supervise", "done"].some(id => status[id] !== "pending");
+    if (movedOn) status.wait = "skipped";
+  }
+
+  const nodes = order.map(id => ({ id, label: labels[id], status: status[id] }));
+  const successCount = nodes.filter(node => node.status === "success").length;
+  let statusLine = "正在准备";
+  if (jobState === "ready") statusLine = "已完成";
+  else if (jobState === "waiting_input") statusLine = runningLine.wait;
+  else if (jobState === "failed" || jobState === "interrupted") statusLine = `停在${labels[currentStage as keyof typeof labels] || "当前步骤"}，材料仍在`;
+  else if (jobState === "queued") statusLine = "排队中";
+  else if (currentStage in runningLine) statusLine = runningLine[currentStage];
+  return { nodes, successCount, statusLine };
 }
 
 export function AgentExecutionTrace({ receipts, currentStage, jobState }: {
   receipts?: StepReceipt[]; currentStage: string; jobState: string;
 }) {
-  const rows = buildAgentTrace(receipts, currentStage, jobState);
-  if (!rows.length) return null;
-  return <section className="agent-trace" aria-label="多 Agent 执行轨迹">
-    <header><div><span>多 Agent 协作</span><strong>本次任务的真实执行轨迹</strong></div><small>{rows.filter(row => row.status === "done").length} 步已完成</small></header>
-    <ol>{rows.map(row => <li className={row.status} key={row.id}>
-      <i aria-hidden="true">{row.icon}</i><div><strong>{row.agent}</strong><span>{row.detail}</span></div><em>{row.status === "done" ? "完成" : "进行中"}</em>
+  const graph = buildExecutionGraph(receipts, currentStage, jobState);
+  return <section className="execution-graph" aria-label="生成阶段">
+    <header>
+      <div><span>当前状态</span><strong className="execution-status">{graph.statusLine}</strong></div>
+      <small>已完成 {graph.successCount} 个节点</small>
+    </header>
+    <ol className="execution-nodes">{graph.nodes.map(node => <li key={node.id} data-stage={node.id} data-status={node.status} className={node.status}>
+      <strong>{node.label}</strong><em>{statusText[node.status]}</em>
     </li>)}</ol>
+    <p className="execution-edges">阶段关系：计划可回到计划，也可进入起草或补问；修正会回到审阅。没有用到的主管保持未使用。</p>
   </section>;
 }

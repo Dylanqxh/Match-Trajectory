@@ -3,9 +3,18 @@ import { api, GenerationJob, Resume } from "./api";
 import { ResumeText } from "./ResumeText";
 import { QualityReport } from "./QualityReport";
 import { AgentExecutionTrace } from "./executionTrace";
+import { isEditingOutside, nextProgressFocus } from "./progressPlacement";
 
 const stages: Record<string, string> = { plan: "正在阅读材料", draft: "正在写初稿", review: "正在核对", revise: "正在修改措辞", supervise: "正在决定改哪里" };
 const states: Record<string, string> = { queued: "排队中", running: "正在生成", waiting_input: "想再问你一句", ready: "初稿好了", failed: "还没有生成完", interrupted: "中途停了", cancelled: "已取消" };
+
+export function recoveryCopy(job: { draft: unknown; stage: string }): string {
+  if (job.draft) return "可以回到材料区改一改再生成，也可以再试一次。已经写进正文的内容不会凭空补上缺口。";
+  if (job.stage === "plan" || job.stage === "queued") {
+    return "计划这一步没有通过。材料都还在，简历正文还没有写入。可以修改材料后再生成，或再试一次。";
+  }
+  return "这一步没有完成。材料都还在，已有简历版本也不会被覆盖。可以再试一次。";
+}
 
 function calmError(job: GenerationJob): string {
   const raw = job.error || "";
@@ -54,6 +63,37 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
   const [choices, setChoices] = useState<Record<string, string>>({});
   const [refresh, setRefresh] = useState(0);
   const callbacks = useRef({ onFinished }); callbacks.current = { onFinished };
+  const panelRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const draftRef = useRef<HTMLDivElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const seenJob = useRef("");
+  const followupUsed = useRef(false);
+  const outcomeFocused = useRef<"" | "draft" | "retry">("");
+  function editingNow() {
+    const active = document.activeElement;
+    const panel = panelRef.current;
+    return isEditingOutside(active instanceof HTMLElement ? active : null, Boolean(panel && active && panel.contains(active)));
+  }
+  function inView() {
+    const panel = panelRef.current;
+    if (!panel) return true;
+    const rect = panel.getBoundingClientRect();
+    const height = window.innerHeight || document.documentElement.clientHeight;
+    const width = window.innerWidth || document.documentElement.clientWidth;
+    return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
+  }
+  function place(reason: "appear" | "followup" | "ready" | "failed") {
+    const decision = nextProgressFocus({
+      reason, inView: inView(), editing: editingNow(), followupUsed: followupUsed.current, outcomeFocused: outcomeFocused.current,
+    });
+    followupUsed.current = decision.followupUsed;
+    outcomeFocused.current = decision.outcomeFocused;
+    if (decision.scroll) panelRef.current?.scrollIntoView({ block: "start" });
+    if (decision.focus === "progress-title") titleRef.current?.focus({ preventScroll: true });
+    if (decision.focus === "draft") draftRef.current?.focus({ preventScroll: true });
+    if (decision.focus === "retry") retryRef.current?.focus({ preventScroll: true });
+  }
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -70,6 +110,17 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
     void poll();
     return () => { stopped = true; clearTimeout(timer); };
   }, [jobId, refresh]);
+  useEffect(() => {
+    if (!job) return;
+    if (seenJob.current !== job.id) {
+      seenJob.current = job.id;
+      followupUsed.current = false;
+      outcomeFocused.current = "";
+      place("appear");
+    }
+    if (job.state === "ready" && job.draft) place("ready");
+    else if (job.state === "failed" || job.state === "interrupted") place("failed");
+  }, [job]);
   async function act(work: () => Promise<void>) {
     setBusy(true); setError("");
     try { await work(); } catch (error) { setError((error as Error).message); }
@@ -81,15 +132,15 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
   const canRecoverDraft = job?.mode === "generate" && ["failed", "interrupted"].includes(job.state) && (job.draft || job.framework);
   const gaps = job ? [...(job.coverage_notes || []), ...(job.plan?.gaps || [])].filter((note, index, all) => note && all.indexOf(note) === index) : [];
   const failure = job && ["failed", "interrupted"].includes(job.state) ? calmError(job) : "";
-  return <section className="generation-panel" aria-label="AI 生成任务">
-    <div className="panel-title"><div><span className="eyebrow">初稿</span><h2>{job?.draft ? "看看这版简历" : job?.state === "failed" ? "还没生成完" : "正在生成"}</h2></div>
+  return <section className="generation-panel" id="generation-progress" aria-label="AI 生成任务" ref={panelRef}>
+    <div className="panel-title"><div><span className="eyebrow">初稿</span><h2 id="generation-progress-title" tabIndex={-1} ref={titleRef}>{job?.draft ? "看看这版简历" : job?.state === "failed" ? "还没生成完" : "正在生成"}</h2></div>
       <button className="text-button" onClick={onClose}>收起</button></div>
     {error && <p className="error" role="alert">{error}<button onClick={() => setRefresh(x => x + 1)}>刷新</button></p>}
     {!job && !error && <p className="chat-empty">正在打开这次生成…</p>}
     {job && <>
       <div className="generation-state"><strong>{states[job.state] || "处理中"}</strong><span>{job.input.target_role} · {stages[job.stage] || "整理材料"}</span></div>
       <AgentExecutionTrace receipts={job.step_receipts} currentStage={job.stage} jobState={job.state}/>
-      {failure && <div className="generation-recover"><strong>{failure}</strong><p>可以回到材料区改一改再生成，也可以再试一次。已经写进正文的内容不会凭空补上缺口。</p></div>}
+      {failure && job && <div className="generation-recover"><strong>{failure}</strong><p>{recoveryCopy(job)}</p></div>}
       {job.stop_reason && !failure && <p className="notice">{job.stop_reason}</p>}
       {job.service_warning && <p className="notice">{job.service_warning}</p>}
       {job.framework && <p>目前只有目标岗位，还没有可以写进简历的经历。可以先进入编辑器自己写，或补充一段真实材料后再生成。</p>}
@@ -97,11 +148,11 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
         choices={choices} notes={answers} busy={busy}
         onChoice={(questionId, optionId) => setChoices(current => ({ ...current, [questionId]: optionId }))}
         onNote={(questionId, value) => setAnswers(current => ({ ...current, [questionId]: value }))}
-        onSubmit={() => void act(() => command("answer", { question_group: job.question_group, answers, choices, skip: false }))}
-        onSkip={() => void act(() => command("answer", { question_group: job.question_group, answers: {}, choices: {}, skip: true }))}/>}
+        onSubmit={() => void act(async () => { place("followup"); await command("answer", { question_group: job.question_group, answers, choices, skip: false }); })}
+        onSkip={() => void act(async () => { place("followup"); await command("answer", { question_group: job.question_group, answers: {}, choices: {}, skip: true }); })}/>}
       {gaps.length > 0 && <div className="gap-notes"><h3>这些先别写进简历</h3><p>材料里还没写清的地方，只放在这里提醒你。不会自动补进正文。</p>
         {gaps.map(note => <p key={note}>{note}</p>)}</div>}
-      {job.draft && <div className="candidate-content">
+      {job.draft && <div className="candidate-content" id="generation-draft" tabIndex={-1} ref={draftRef}>
         <p className="fine">{job.review?.verdict === "pass" && !job.issues.some(i => i.severity === "blocking") ? "事实审阅通过；写作质量见单独报告，仍需核对个人事实。" : "当前候选尚未通过完整审阅，可先作为草稿使用。"}</p>
         {job.draft.education?.map(row => <p key={row.id}><strong>{[row.school, row.degree, row.major].filter(Boolean).join(" · ")}</strong> {[resumeDate(row.start_date), resumeDate(row.end_date)].filter(Boolean).join(" — ")}</p>)}
         {job.draft.summary && <p>{resumeDate(job.draft.summary.text)}</p>}
@@ -114,7 +165,7 @@ export function GenerationPanel({ jobId, onClose, onAdopt, beforeAdopt, onFinish
       <div className="button-row generation-actions">
         {canRecoverDraft && <button className="primary" disabled={busy} onClick={() => { if (beforeAdopt()) void act(async () => onAdopt(await api<Resume>(`/api/generation-jobs/${jobId}/adopt`, {}))); }}>
           把未完成草稿放入编辑器</button>}
-        {["failed", "interrupted"].includes(job.state) && job.continuation?.allowed !== false && <button className="secondary" disabled={busy} onClick={() => void act(() => command("resume"))}>再试一次</button>}
+        {["failed", "interrupted"].includes(job.state) && job.continuation?.allowed !== false && <button className="secondary" id="generation-retry" ref={retryRef} disabled={busy} onClick={() => void act(() => command("resume"))}>再试一次</button>}
         {["queued", "running", "waiting_input"].includes(job.state) && <button className="text-button" disabled={busy} onClick={() => void act(() => command("cancel"))}>取消任务</button>}
       </div>
       {["failed", "interrupted"].includes(job.state) && job.continuation && <p className="fine">{job.continuation.reason}</p>}

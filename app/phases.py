@@ -60,12 +60,6 @@ def transition(job, result):
         return Transition('revise' if policy.can_revise(job) else 'done', {'issues': result.value, 'review': None})
     output = result.value
     if result.stage == 'plan':
-        from app.gates import ungrounded_choice
-        from app.model_client import ModelOutputError
-
-        message = ungrounded_choice(output, job.get('evidence') or [])
-        if message:
-            raise ModelOutputError(message)
         return Transition('wait' if output.decision == 'ask' and job['input']['allow_questions'] else 'draft', {'plan': output.model_dump()})
     if result.stage in ('draft', 'revise'):
         payload = prepare_draft(job, output).model_dump()

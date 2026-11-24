@@ -10,7 +10,7 @@ export function AgentProposalCard({ proposal }: { proposal: AgentProposal }) {
   const blocked = proposal.state === "blocked";
   return <section className={`agent-proposal ${blocked ? "blocked" : ""}`} aria-label="Agent 修改结果">
     <div className="agent-proposal-title"><div><span>{blocked ? "本次未保存" : "已自动保存"}</span><strong>{proposal.changes.length} 处改动</strong></div>
-      <em>{blocked ? "存在事实风险" : `源自 v${proposal.base_revision}`}</em></div>
+      <em>{blocked ? (proposal.issues.some(issue => issue.code === "scope") ? "超出本次修改范围" : "存在事实风险") : `源自 v${proposal.base_revision}`}</em></div>
     {proposal.changes.map(change => <article className="agent-diff" key={change.item_id}>
       {change.before !== change.after && <><div><span>修改前</span><p>{change.before || "（新增内容）"}</p></div>
         <div className="after"><span>修改后</span><p>{change.after || "（删除内容）"}</p></div></>}
@@ -72,7 +72,7 @@ export function AgentPanel({ target, modelReady, onOpenSettings, onApplied, coll
   }
 
   const locked = busy || !session || !modelReady || Boolean(target?.blockedReason);
-  const suggestions = ["把最长的一条压缩到一行", "更突出我本人负责的部分", "按目标岗位调整经历顺序"];
+  const suggestions = ["只改加粗", "只改数字相关", "把最长的一条压缩到一行", "更突出我本人负责的部分", "按目标岗位调整经历顺序"];
 
   return <aside className={`agent-rail${collapsed ? " collapsed" : ""}`} aria-label="简历 Agent">
     {collapsed ? <button type="button" className="agent-strip" aria-expanded={false} aria-label={target ? "展开简历 Agent" : "简历 Agent，未选择目标"} onClick={onToggle}>
@@ -105,7 +105,7 @@ export function AgentPanel({ target, modelReady, onOpenSettings, onApplied, coll
         <label htmlFor="agent-message">告诉 Agent 想怎么改</label>
         <textarea id="agent-message" rows={4} maxLength={2000} value={text} disabled={locked}
           onChange={event => setText(event.target.value)} placeholder="例如：把项目第二条写得更简洁，但保留原文中的数字结果"/>
-        <div><small>通过事实校验后自动保存；新增事实仍需原文依据。</small><button className="primary" type="submit" disabled={locked || !text.trim()}>发送并修改</button></div>
+        <div><small>范围锁只在说法明确时生效：只改加粗、只改数字相关、指定某一段、润色但保留数字。其余要求仍走事实校验，不能保证任意自然语言修改都会成功。</small><button className="primary" type="submit" disabled={locked || !text.trim()}>发送并修改</button></div>
       </form>
     </>}
     </>}

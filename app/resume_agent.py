@@ -12,7 +12,7 @@ import json
 import uuid
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 from sqlalchemy import Column, MetaData, String, Table, Text, insert, select, update
 
 from app.budget import DEFAULT_POLICY
@@ -136,7 +136,7 @@ class AgentService:
             context = self._context(snapshot, session, message.text)
             config = self.registry.get(self.registry.current)
             completion = await self.client.propose_edit(config, context, AgentEditOutput)
-            proposal = self._proposal(snapshot, completion.value)
+            proposal = self._proposal(snapshot, completion.value, message.text)
             session["proposal"] = proposal
             session["messages"].append({"role": "assistant", "text": completion.value.reply})
             session.update(status="idle", error="")
@@ -146,12 +146,18 @@ class AgentService:
                 self._write(session)
                 return {"session": self.view(session), "resume": None}
             if proposal["state"] == "blocked":
-                session["messages"].append({"role": "assistant", "text": "这次修改包含无法由现有材料支持的内容，因此没有保存。你可以直接补充材料或换一种说法。"})
+                scope_reason = next((row["message"] for row in proposal["issues"] if row.get("code") == "scope"), "")
+                session["messages"].append({"role": "assistant", "text": scope_reason or "这次修改包含无法由现有材料支持的内容，因此没有保存。你可以直接补充材料或换一种说法。"})
                 self._write(session)
                 return {"session": self.view(session), "resume": None}
         except ProviderError as exc:
             session["messages"].append({"role": "assistant", "text": str(exc)})
             session.update(status="error", error=str(exc), proposal=None)
+            self._write(session)
+            return {"session": self.view(session), "resume": None}
+        except ValidationError:
+            session["messages"].append({"role": "assistant", "text": "加粗短语必须已经出现在原句里，因此没有保存。"})
+            session.update(status="idle", error="", proposal=None)
             self._write(session)
             return {"session": self.view(session), "resume": None}
         try:
@@ -300,7 +306,7 @@ class AgentService:
                 "user_request": scrub(request),
                 "recent_messages": [{**row, "text": scrub(row["text"])} for row in session.get("messages", [])[-6:-1]]}
 
-    def _proposal(self, snapshot: dict, output: AgentEditOutput) -> dict:
+    def _proposal(self, snapshot: dict, output: AgentEditOutput, request: str = "") -> dict:
         candidate = output.content.model_copy(deep=True)
         base = snapshot["content"]
         candidate.name, candidate.contact = base.name, base.contact
@@ -344,7 +350,16 @@ class AgentService:
             issues.append({"item_id": "document", "severity": "blocking", "code": "reference",
                            "message": "Agent 修改没有对应原文引用，不能应用。", "suggestion": "请缩小修改范围或补充真实材料。",
                            "repair_action": "need_input"})
+        from app.edit_scope import classify_edit_scope, scope_rejection
+
+        scope = classify_edit_scope(request, base)
+        reason = scope_rejection(scope, base, candidate, snapshot.get("evidence") or [])
+        if reason:
+            issues.append({"item_id": "document", "severity": "blocking", "code": "scope",
+                           "message": reason, "suggestion": "换一种更明确、且落在支持范围内的改法。",
+                           "repair_action": "need_input"})
         return {"id": uuid.uuid4().hex, "state": "blocked" if any(row["severity"] == "blocking" for row in issues) else "ready",
+                "scope": scope.kind,
                 "base_revision": snapshot["base_revision"], "base_hash": snapshot["base_hash"],
                 "target_token": snapshot["target_token"],
                 "content": candidate.model_dump(), "changes": changes, "issues": issues, "source_map": source_map,
@@ -364,7 +379,8 @@ class AgentService:
         draft = content_draft(ResumeContent.model_validate(proposal["content"]), snapshot["evidence"], proposal["source_map"])
         return self.jobs.create(inputs, self.registry.current, self.registry.describe(config), skill, snapshot["evidence"],
                                 mode="agent_edit", extra={"state": "ready", "stage": "done", "draft": draft.model_dump(),
-                                "issues": proposal["issues"], "calls": 1, "review": None, "target_hash": proposal["base_hash"]})
+                                "issues": proposal["issues"], "calls": 1, "review": None, "target_hash": proposal["base_hash"],
+                                "group_id": snapshot["job"].get("group_id") or snapshot["job"].get("id") or ""})
 
     def _write(self, session: dict) -> None:
         payload = json.dumps(session, ensure_ascii=False)

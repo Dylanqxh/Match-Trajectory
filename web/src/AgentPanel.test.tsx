@@ -113,4 +113,17 @@ describe("AgentPanel", () => {
       onOpenSettings={() => undefined} onApplied={() => undefined}/>);
     expect(expanded).toContain("先选择一份简历或生成任务");
   });
+
+  it("states the real scope-lock boundary and a scope rejection", () => {
+    const html = renderToStaticMarkup(<AgentPanel target={{ type: "resume", id: "resume-1", label: "林然", revision: 1 }}
+      modelReady={true} onOpenSettings={() => undefined} onApplied={() => undefined}/>);
+    expect(html).toContain("只改加粗");
+    expect(html).toContain("不能保证任意自然语言修改都会成功");
+
+    const blocked = renderToStaticMarkup(<AgentProposalCard proposal={{ ...proposal, state: "blocked", issues: [{
+      item_id: "document", severity: "blocking", code: "scope", message: "只改加粗不能改正文、数字、字段或顺序，因此没有保存。",
+    }] }}/>);
+    expect(blocked).toContain("超出本次修改范围");
+    expect(blocked).toContain("因此没有保存");
+  });
 });

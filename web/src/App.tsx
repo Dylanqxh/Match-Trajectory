@@ -76,11 +76,22 @@ export default function App() {
   const [agentCollapsed, setAgentCollapsed] = useState(true);
   const agentPinned = useRef<boolean | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [histories, setHistories] = useState<Record<string, { revision: number; origin: string; updated_at: string }[]>>({});
+  const [selectedVersion, setSelectedVersion] = useState<{ resumeId: string; revision: number } | null>(null);
   const previewBox = useRef<HTMLDivElement>(null);
   const formKey = JSON.stringify({ name: content.name, target_role: content.target_role, contact: content.contact, location: content.location, profile_note: content.profile_note, education: content.education, source, jd, careerStage, careerGap });
   const hasUnsavedChanges = dirty || (!record && Boolean(source.trim() || jd.trim() || content.name.trim() || content.target_role.trim() || content.contact.trim() || (content.location || "").trim() || (content.profile_note || "").trim()
     || careerStage !== "unspecified" || careerGap || (content.education || []).some(e => e.school.trim() || e.degree.trim() || e.major.trim() || e.start_date?.trim() || e.end_date?.trim())) && formKey !== savedInput.current);
 
+  useEffect(() => {
+    let stopped = false;
+    if (!list.length) { setHistories({}); return; }
+    void Promise.all(list.map(async row => {
+      const history = await api<Resume[]>(`/api/resumes/${row.id}/history`);
+      return [row.id, history.map(item => ({ revision: item.revision, origin: item.origin, updated_at: item.updated_at }))] as const;
+    })).then(pairs => { if (!stopped) setHistories(Object.fromEntries(pairs)); }).catch(() => {});
+    return () => { stopped = true; };
+  }, [list]);
   function adopt(row: Resume) {
     setRecord(row); setContent(row.content); setDirty(false); setError("");
     localStorage.setItem("mt_resume_id", row.id);
@@ -285,6 +296,7 @@ export default function App() {
         if (!deletionInFlight.current && selectedJobId.current === job.id) {
           adopt(row); showJob(null); void refreshList(); void refreshJobs();
           setStatus("简历已生成并自动进入编辑器，请直接修改或导出");
+          requestAnimationFrame(() => document.getElementById("resume-draft-title")?.focus());
         }
       }).catch(error => setError((error as Error).message));
     }
@@ -316,10 +328,17 @@ export default function App() {
       <button className="new-button" disabled={interactionLocked} onClick={() => {
         if (canSwitch()) { setRecord(null); setContent(emptyContent); setSource(""); setJd(""); setRoleDirection(""); setCareerStage("unspecified"); setCareerGap(false); setSendMaterials(false); setDirty(false); savedInput.current = ""; generationRequest.current = null; showJob(null); localStorage.removeItem("mt_resume_id"); }
       }}>＋ 新建简历</button>
-      <WorkspaceSidebar resumes={list} jobs={jobs} selectedResumeId={record?.id || null} selectedJobId={jobId}
-        disabled={interactionLocked}
-        onSelectResume={row => { if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${row.id}`))); }}
-        onDeleteResume={row => void deleteRecord(row)} onSelectJob={job => showJob(job.id)} onDeleteJob={job => void deleteJob(job.id)}/>
+      <WorkspaceSidebar resumes={list} jobs={jobs} versions={histories} selectedResumeId={record?.id || null} selectedJobId={jobId}
+        selectedVersion={selectedVersion} disabled={interactionLocked}
+        onSelectResume={row => { setSelectedVersion(null); if (canSwitch()) void action(async () => adopt(await api<Resume>(`/api/resumes/${row.id}`))); }}
+        onDeleteResume={row => void deleteRecord(row)} onSelectJob={job => { setSelectedVersion(null); showJob(job.id); }} onDeleteJob={job => void deleteJob(job.id)}
+        onSelectVersion={(resumeId, revision) => {
+          setSelectedVersion({ resumeId, revision });
+          void api<Resume[]>(`/api/resumes/${resumeId}/history`).then(rows => {
+            setHistory(rows);
+            setStatus(`正在查看版本 v${revision}。正文仍是当前版本，版本记录保留在左侧。`);
+          }).catch(reason => setError((reason as Error).message));
+        }}/>
       <div className="sidebar-bottom"><button disabled={interactionLocked} onClick={() => setSettings(true)}>⚙ 模型连接</button>
         <div className="local-note"><span className="status-dot"/>资料保存在本机<small>M1.7 · 分阶段生成与可信交付</small></div></div>
     </aside>
@@ -345,7 +364,7 @@ export default function App() {
             adopt(await api<Resume>("/api/demo", {})); await refreshList();
           }); }}>先用虚构示例体验 →</button>
         </div>
-        <form onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
+        <form id="materials-form" onSubmit={event => { event.preventDefault(); void generate(); }}><fieldset disabled={interactionLocked}>
           <section className="identity-strip" aria-label="姓名与联系方式">
             <p>姓名、联系方式、城市和档案补充都由你单独填写。留空的不会从材料里自动抄到页眉。</p>
             <label>姓名<input value={content.name} maxLength={80} onChange={e => setContent({ ...content, name: e.target.value })} placeholder="可留空，沿用材料中的姓名"/></label>
@@ -396,7 +415,7 @@ export default function App() {
           {record.origin === "demo" ? "虚构演示材料，不属于你的经历，不可直接投递。" : record.ai ? "AI 整理版本 · 请对照个人经历核对，审阅通过也不能代替事实确认。" : "手工整理版本 · 请核对个人事实，当前未经过 AI 审阅。"}
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
         </div>
-        <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
+        <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
           <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
             onActiveSectionChange={setEditorSection} onChange={edit}/>
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>

@@ -214,7 +214,8 @@ class GenerationService:
                            pinned_role=original.get("skill", {}).get("role"))
         job = self.jobs.create(inputs, self.registry.current, self.registry.describe(config), skill,
                                original["evidence"], mode="recheck", extra={"stage": "review", "draft": draft.model_dump(),
-                               "answer_context": original.get("answer_context", []), "target_hash": resume_hash(record.content)})
+                               "answer_context": original.get("answer_context", []), "target_hash": resume_hash(record.content),
+                               "group_id": original.get("group_id") or original["id"]})
         self.wake()
         return job
 

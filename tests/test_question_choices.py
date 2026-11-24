@@ -50,3 +50,24 @@ def test_choice_cannot_invent_a_number_and_skip_does_not_confirm_it():
     assert added == []
     assert context[0]["editorial"] is True and context[0]["fact_ids"] == ["e1"]
     assert "20%" not in context[0]["answer"]
+
+
+def test_dates_and_ordinals_are_not_invented_metrics():
+    from app.gates import ungrounded_choice
+
+    evidence = [{"id": "e1", "text": "2025-03 使用 Java 完成查询接口。"}]
+    dated = Plan.model_validate({"decision": "ask", "questions": [{"id": "q1", "kind": "choice", "text": "先看哪段？", "options": [
+        {"id": "a", "label": "先写 2025.03 的接口工作", "recommended": True, "fact_ids": ["e1"]},
+        {"id": "b", "label": "保持材料原来的顺序", "recommended": False, "fact_ids": ["e1"]},
+    ]}]})
+    ordinal = Plan.model_validate({"decision": "ask", "questions": [{"id": "q1", "kind": "choice", "text": "先看哪段？", "options": [
+        {"id": "a", "label": "先写第1段已有经历", "recommended": True, "fact_ids": ["e1"]},
+        {"id": "b", "label": "1. 保持材料原来的顺序", "recommended": False, "fact_ids": ["e1"]},
+    ]}]})
+    invented = Plan.model_validate({"decision": "ask", "questions": [{"id": "q1", "kind": "choice", "text": "先看哪段？", "options": [
+        {"id": "a", "label": "先写点击率提升 20%", "recommended": True, "fact_ids": ["e1"]},
+        {"id": "b", "label": "保持材料原来的顺序", "recommended": False, "fact_ids": ["e1"]},
+    ]}]})
+    assert ungrounded_choice(dated, evidence) == ""
+    assert ungrounded_choice(ordinal, [{"id": "e1", "text": "使用 Java 完成查询接口。"}]) == ""
+    assert "没有的数字" in ungrounded_choice(invented, evidence)

@@ -216,6 +216,12 @@ class Workflow(GenerationService):
                 validate_revision_scope(job, value.value)
             if isinstance(value.value, Plan) and any(ref not in {e["id"] for e in job["evidence"]} for ref in value.value.selected_fact_ids):
                 raise ModelOutputError("选材引用不存在，不能继续起草")
+            if stage == "plan" and isinstance(value.value, Plan):
+                from app.gates import ungrounded_choice
+
+                message = ungrounded_choice(value.value, job.get("evidence") or [])
+                if message:
+                    raise ModelOutputError(message, diagnostic={"category": "ungrounded_choice", "fields": []})
             if isinstance(value.value, Review):
                 candidate_type = ReviewDraft if job["mode"] == "recheck" else Draft
                 allowed = {"document", *[c.id for c in candidate_type.model_validate(job["draft"]).claims()],
@@ -322,7 +328,16 @@ class Workflow(GenerationService):
         return StageResult(stage, key, "output", output)
 
     async def plan_stage(self, job, token):
-        return await self._stage_call(job, token, "plan", Plan)
+        try:
+            return await self._stage_call(job, token, "plan", Plan)
+        except ModelOutputError as exc:
+            if (exc.diagnostic or {}).get("category") != "ungrounded_choice":
+                raise
+            current = self.jobs.get(job["id"])
+            from app.gates import recover_ungrounded_plan
+            from app.phases import StageResult, phase_key
+
+            return StageResult("plan", phase_key(current), "output", recover_ungrounded_plan(current.get("evidence") or []))
 
     async def draft_stage(self, job, token):
         return await self._stage_call(job, token, "draft", Draft)

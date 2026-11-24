@@ -306,6 +306,22 @@ def _inject_gap_markers(sections: list[dict], prompts: list[str]) -> list[str]:
     return notes
 
 
+_DATE_TOKEN = re.compile(r"((?:19|20|21)\d{2})\s*[\./\-年]\s*(0?[1-9]|1[0-2])(?:\s*月)?")
+_ORDINAL_TOKEN = re.compile(r"第\s*\d+\s*[段条目项点步问版组篇]|(?:(?<=^)|(?<=[\s（(]))\d+\s*[\.、．\)）]")
+
+
+def date_keys(text: str) -> set[str]:
+    """Year-month identity. 2025.03, 2025-03 and 2025年3月 are the same key."""
+    return {f"{match.group(1)}-{int(match.group(2)):02d}" for match in _DATE_TOKEN.finditer(text or "")}
+
+
+def metric_tokens(text: str) -> list[str]:
+    """Digits that assert a measurement. Dates and list ordinals are not metrics."""
+    without_dates = _DATE_TOKEN.sub(" ", text or "")
+    without_ordinals = _ORDINAL_TOKEN.sub(" ", without_dates)
+    return re.findall(r"\d+(?:\.\d+)?", without_ordinals)
+
+
 def ungrounded_choice(plan, evidence) -> str:
     """Choice labels may point at existing evidence. They may not invent numbers or proficiency."""
     known = {row.get("id"): row.get("text") or "" for row in evidence if isinstance(row, dict)}
@@ -316,13 +332,39 @@ def ungrounded_choice(plan, evidence) -> str:
             if not option.fact_ids or any(fact_id not in known for fact_id in option.fact_ids):
                 return "选择题的每个选项都要引用已经存在的证据"
             cited = "\n".join(known[fact_id] for fact_id in option.fact_ids)
-            for number in re.findall(r"\d+(?:\.\d+)?", option.label):
-                if number not in cited:
+            if not date_keys(option.label) <= date_keys(cited):
+                return "选择题不能写出证据里没有的数字"
+            for number in metric_tokens(option.label):
+                if not re.search(rf"(?<!\d){re.escape(number)}(?!\d)", cited):
                     return "选择题不能写出证据里没有的数字"
             for word in ("精通", "熟练", "掌握", "熟悉"):
                 if word in option.label and word not in cited:
                     return "选择题不能提高原文没有写出的熟练度"
     return ""
+
+
+def recover_ungrounded_plan(evidence):
+    """Editorial ordering question, or a draft plan when that question would still be illegal."""
+    from app.generation_models import Plan, Question, QuestionOption
+
+    rows = [row for row in evidence or [] if isinstance(row, dict) and row.get("id") and str(row.get("text") or "").strip()]
+    usable = [row for row in rows if not str(row["id"]).startswith("profile-")] or rows
+    ids = [str(row["id"]) for row in usable[:4]]
+    if not ids:
+        return Plan(decision="draft", selected_fact_ids=[], questions=[])
+    labels = ["先写这段已有经历", "接着写后面这段已有经历", "再写另一段已有经历", "保持材料原来的顺序"]
+    options = [
+        QuestionOption(id=f"order{index + 1}", label=labels[index], recommended=index == 0, fact_ids=[fact_id])
+        for index, fact_id in enumerate(ids[:3])
+    ]
+    if len(options) == 1:
+        options.append(QuestionOption(id="order-keep", label=labels[3], recommended=False, fact_ids=[ids[0]]))
+    plan = Plan(decision="ask", selected_fact_ids=ids[:len(options)], questions=[Question(
+        id="editorial-order", kind="choice", text="已有材料里，这版更想先让读者看到哪一段？", options=options,
+    )])
+    if ungrounded_choice(plan, evidence):
+        return Plan(decision="draft", selected_fact_ids=ids[:1], questions=[])
+    return plan
 
 
 def _skipped_followups(job: dict) -> list[str]:

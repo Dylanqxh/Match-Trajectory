@@ -16,7 +16,7 @@ export interface GenerationIssue { item_id: string; severity: "blocking" | "warn
 export function unresolvedBlocking(issue: GenerationIssue): boolean {
   return issue.severity === "blocking" && !["deleted", "source_reviewed"].includes(issue.resolution?.action || "");
 }
-export interface GenerationSummary { id: string; state: string; stage: string; target_role: string; mode: string; adopted_resume_id: string | null; resume_id: string | null; created_at: string; updated_at: string }
+export interface GenerationSummary { id: string; state: string; stage: string; target_role: string; mode: string; adopted_resume_id: string | null; resume_id: string | null; group_id?: string | null; created_at: string; updated_at: string }
 export interface GenerationJob extends GenerationSummary {
   engine?: string; engine_version?: string; stop_reason?: string;
   budget_policy?: { version: string; max_calls: number; max_revisions: number; total_ms: number };

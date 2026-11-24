@@ -14,8 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workbench-a4.png" alt="虚构示例陈亦宁的简历预览：右侧固定为一整页 A4，没有内嵌滚动条；下载 PDF 和下载 Word 在这一页下方。" width="420">
+  <img src="docs/images/workbench-a4.png" alt="虚构示例陈亦宁的整页简历：一页 A4 写满教育、实习、两段课程项目和技能，下载 PDF 与下载 Word 在这一页下方。页内姓名、学校和公司都是虚构的。" width="420">
 </p>
+
+上图是应用内虚构示例「陈亦宁」的整页预览，学校、公司和经历都是虚构的，不可投递。
 
 ## 快速启动
 

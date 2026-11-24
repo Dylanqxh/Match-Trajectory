@@ -55,6 +55,10 @@ describe("execution graph", () => {
     expect(html).toContain("回答后进入起草");
     expect(html).toContain("主管未启用");
     expect(html).toContain("<svg");
+    expect(html).toContain("stage-journey");
+    expect(html).toContain("data-stage-card=\"plan\"");
+    expect(html).toContain("data-stage-card=\"done\"");
+    expect(html).toContain("生成主流程");
     expect(html).not.toContain("🔎");
     expect(html).not.toContain("多 Agent");
     expect(html).not.toContain("%");

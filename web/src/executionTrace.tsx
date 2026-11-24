@@ -146,98 +146,39 @@ export function AgentExecutionTrace({ receipts, currentStage, jobState }: {
   const superviseUnused = supervise?.status === "skipped";
   const node = (id: string) => graph.nodes.find(item => item.id === id)!;
   const mark = (from: string, to: string) => edgeTaken(taken, from, to) ? "taken" : "allowed";
+  const main = [node("plan"), node("draft"), node("review"), node("done")];
   return <section className="execution-graph" aria-label="生成阶段">
     <header>
       <div><span>当前状态</span><strong className="execution-status">{graph.statusLine}</strong></div>
       <small>已完成 {graph.successCount} 个节点</small>
     </header>
-    <svg className="execution-wide" viewBox="0 0 760 250" role="img" aria-label="阶段图，含计划自环、补问分叉、回答后进入起草、修正回审阅，以及主管到完成">
-      <defs>
-        <marker id="stage-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M 0 1.4 L 8 5 L 0 8.6 Z" fill="#2e6249"/>
-        </marker>
-      </defs>
-      <title>阶段图</title>
-      <Edge name="plan-draft" x1={122} y1={64} x2={248} y2={64} kind={mark("plan", "draft")} label="" />
-      <Edge name="draft-review" x1={292} y1={64} x2={418} y2={64} kind={mark("draft", "review")} label="" />
-      <Edge name="review-done" x1={462} y1={64} x2={618} y2={64} kind={mark("review", "done")} label="" />
-      <path data-edge="plan-plan" data-kind={mark("plan", "plan")} d="M78 46 C 42 28, 42 92, 84 82" className={`flow-edge ${mark("plan", "plan")}`} markerEnd="url(#stage-arrow)" />
-      <text x={18} y={40} className="flow-label">再试</text>
-      <path data-edge="plan-wait" data-kind={mark("plan", "wait")} d="M100 86 V146" className={`flow-edge ${mark("plan", "wait")}`} markerEnd="url(#stage-arrow)" />
-      <path data-edge="wait-draft" data-kind={mark("wait", "draft")} d="M122 168 C 190 168, 270 120, 270 86" className={`flow-edge resume ${mark("wait", "draft")}`} markerEnd="url(#stage-arrow)" />
-      <text x={150} y={158} className="flow-label">回答后</text>
-      <path data-edge="review-revise" data-kind={mark("review", "revise")} d="M440 86 V146" className={`flow-edge ${mark("review", "revise")}`} markerEnd="url(#stage-arrow)" />
-      <path data-edge="revise-review" data-kind={mark("revise", "review")} d="M418 168 C 330 168, 330 64, 418 64" className={`flow-edge back ${mark("revise", "review")}`} markerEnd="url(#stage-arrow)" />
-      <text x={332} y={120} className="flow-label">回到审阅</text>
-      {!superviseUnused && <>
-        <path data-edge="review-supervise" data-kind={mark("review", "supervise")} d="M462 78 C 540 90, 600 120, 628 146" className={`flow-edge secondary ${mark("review", "supervise")}`} markerEnd="url(#stage-arrow)" />
-        <path data-edge="supervise-revise" data-kind={mark("supervise", "revise")} d="M628 168 H462" className={`flow-edge secondary ${mark("supervise", "revise")}`} markerEnd="url(#stage-arrow)" />
-        <path data-edge="supervise-done" data-kind={mark("supervise", "done")} d="M640 146 C 690 120, 680 80, 662 64" className={`flow-edge secondary ${mark("supervise", "done")}`} markerEnd="url(#stage-arrow)" />
-        <GraphNode spec={node("supervise")} x={640} y={168} secondary />
-      </>}
-      <GraphNode spec={node("plan")} x={100} y={64} />
-      <GraphNode spec={node("draft")} x={270} y={64} />
-      <GraphNode spec={node("review")} x={440} y={64} />
-      <GraphNode spec={node("done")} x={640} y={64} />
-      <GraphNode spec={node("wait")} x={100} y={168} />
-      <GraphNode spec={node("revise")} x={440} y={168} />
-      {superviseUnused && <text x={18} y={232} className="flow-label" data-edge="supervise-done">主管未启用：可由事实审阅进入，再回到修正，或进入完成。</text>}
-    </svg>
-    <div className="execution-narrow" aria-label="窄屏阶段关系">
-      <div className="edge-row" data-stage="plan" data-status={node("plan").status}>
-        <StageIcon id="plan"/><strong>材料分析</strong><em>{statusText[node("plan").status]}</em>
-        <span data-edge="plan-plan" className="loop-mark">可再试</span>
+    <div className="stage-journey" aria-label="生成主流程">
+      <h3>生成主流程</h3>
+      <div className="stage-card-row">
+        {main.map((spec, index) => <div className="stage-card-slot" key={spec.id}>
+          {index > 0 && <span className={`stage-connector ${mark(main[index - 1].id, spec.id)}`} data-edge={`${main[index - 1].id}-${spec.id}`} aria-hidden="true"/>}
+          <div className={`stage-card ${spec.status}`} data-stage-card={spec.id} data-status={spec.status}>
+            <span className="stage-card-icon"><StageIcon id={spec.id}/></span>
+            <div><strong>{spec.label}</strong><em>{statusText[spec.status]}</em></div>
+            {spec.id === "plan" && <small data-edge="plan-plan">失败可重试</small>}
+          </div>
+        </div>)}
       </div>
-      <div className="branch-with-return">
-        <svg className="return-connector" viewBox="0 0 22 64" aria-hidden="true">
-          <path data-edge="plan-wait" d="M11 2 V50" fill="none" stroke="#2e6249" strokeWidth="2.2" />
-          <path d="M11 60 L5 48 H17 Z" fill="#2e6249" />
-        </svg>
-        <div className="edge-row branch" data-branch="wait" data-status={node("wait").status}>
-          <StageIcon id="wait"/><strong>补问</strong><em>{statusText[node("wait").status]}</em>
-          <svg className="return-connector wide-arrow" viewBox="0 0 88 36" aria-hidden="true">
-            <path data-edge="wait-draft" d="M6 28 C 40 28, 64 12, 74 8" fill="none" stroke="#2e6249" strokeWidth="2.2" />
-            <path d="M84 6 L70 2 V12 Z" fill="#2e6249" />
-          </svg>
-          <span>回答后进入简历写作</span>
-        </div>
+    </div>
+    <div className="stage-branches" aria-label="按需执行的阶段">
+      <div className={`edge-row branch ${node("wait").status}`} data-branch="wait" data-status={node("wait").status}>
+        <span className="branch-icon"><StageIcon id="wait"/></span><div><strong>需要时补问</strong><em>{statusText[node("wait").status]}</em><small>最多一轮；回答后进入起草，也可以直接跳过</small></div>
+        <span data-edge="plan-wait"/><span data-edge="wait-draft"/>
       </div>
-      <div className="edge-row" data-stage="draft" data-edge="plan-draft" data-status={node("draft").status}>
-        <StageIcon id="draft"/><strong>简历写作</strong><em>{statusText[node("draft").status]}</em>
+      <div className={`edge-row branch ${node("revise").status}`} data-branch="revise" data-status={node("revise").status}>
+        <span className="branch-icon"><StageIcon id="revise"/></span><div><strong>发现问题时修正</strong><em>{statusText[node("revise").status]}</em><small>修正后回到事实审阅，不绕过检查</small></div>
+        <span data-edge="review-revise"/><span data-edge="revise-review"/>
       </div>
-      <div className="edge-row" data-stage="review" data-edge="draft-review" data-status={node("review").status}>
-        <StageIcon id="review"/><strong>事实审阅</strong><em>{statusText[node("review").status]}</em>
+      <div className={`edge-row branch ${supervise?.status || "pending"}`} data-branch="supervise" data-status={supervise?.status || "pending"}>
+        <span className="branch-icon"><StageIcon id="supervise"/></span><div><strong>智能修正策略</strong><em>{superviseUnused ? "未启用" : statusText[supervise?.status || "pending"]}</em>
+          <small>{superviseUnused ? "主管未启用；主流程仍可直接完成" : "可安排修正重点，再回审阅或进入完成"}</small></div>
+        <span data-edge="review-supervise"/><span data-edge="supervise-revise"/><span data-edge="supervise-done"/>
       </div>
-      <div className="branch-with-return">
-        <svg className="return-connector" viewBox="0 0 22 72" aria-hidden="true">
-          <path data-edge="revise-review" d="M11 68 V16" fill="none" stroke="#2e6249" strokeWidth="2.6" />
-          <path d="M11 4 L4 18 H18 Z" fill="#2e6249" />
-        </svg>
-        <div className="edge-row branch" data-branch="revise" data-edge="review-revise" data-status={node("revise").status}>
-          <StageIcon id="revise"/><strong>修正</strong><em>{statusText[node("revise").status]}</em>
-          <span>左侧箭头回到事实审阅</span>
-        </div>
-      </div>
-      <div className="edge-row" data-stage="done" data-edge="review-done" data-status={node("done").status}>
-        <StageIcon id="done"/><strong>完成</strong><em>{statusText[node("done").status]}</em>
-      </div>
-      <p className={`supervise-note${superviseUnused ? " unused" : ""}`} data-edge="supervise-done">
-        <StageIcon id="supervise"/>
-        <span>{superviseUnused ? "主管未启用。路线仍在：事实审阅 → 主管 → 修正，或主管 → 完成。" : `主管${statusText[supervise?.status || "pending"]}。事实审阅可进入主管，主管可回到修正，或进入完成。`}</span>
-      </p>
     </div>
   </section>;
-}
-
-function Edge({ name, x1, y1, x2, y2, kind }: { name: string; x1: number; y1: number; x2: number; y2: number; kind: string; label: string }) {
-  return <line data-edge={name} data-kind={kind} x1={x1} y1={y1} x2={x2} y2={y2} className={`flow-edge ${kind}`} markerEnd="url(#stage-arrow)" />;
-}
-
-function GraphNode({ spec, x, y, secondary = false }: { spec: ExecutionNode; x: number; y: number; secondary?: boolean }) {
-  return <g className={`flow-node ${spec.status}${secondary ? " secondary" : ""}`} data-stage={spec.id} data-status={spec.status} transform={`translate(${x} ${y})`}>
-    <circle r={secondary ? 16 : 22} />
-    <g transform="translate(-8 -8) scale(0.66)"><IconPaths id={spec.id}/></g>
-    <text y={38} textAnchor="middle" className="flow-name">{spec.label}</text>
-    <text y={52} textAnchor="middle" className="flow-state">{statusText[spec.status]}</text>
-  </g>;
 }

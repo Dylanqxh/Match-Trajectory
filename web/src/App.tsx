@@ -16,6 +16,7 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { ReviewIssues } from "./reviewIssues";
 import { modelPreflight } from "./progressPlacement";
 import { buildGenerationSource } from "./materialSource";
+import { resolveWorkspaceView } from "./workspaceView";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -369,8 +370,9 @@ export default function App() {
     });
   }
   const selectedJob = jobId ? jobs.find(row => row.id === jobId) : undefined;
+  const workspaceView = resolveWorkspaceView(Boolean(record), selectedJob, jobId);
   const agentTarget = activeAgentTarget(selectedJob, record, list, dirty);
-  return <div className={`app-shell${record ? " workbench-open" : ""}`}>
+  return <div className={`app-shell${workspaceView === "document" ? " workbench-open" : ""}`}>
     <aside className="sidebar" inert={resolution ? true : undefined}>
       <div className="brand"><span className="brand-icon">M</span><div>Match-Trajectory<small>求职简历工作台</small></div></div>
       <button className="new-button" disabled={interactionLocked} onClick={() => {
@@ -402,9 +404,16 @@ export default function App() {
       </section>}
       {!modelStatus.startsWith("已连接") && record && <p className="model-chip">模型未连接，编辑和导出仍可用。<button type="button" className="text-button" onClick={() => setSettings(true)}>去连接</button></p>}
       <div className="canvas">
-      {jobId && record && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
-        onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
-      {!record ? <section className="start-layout">
+      {workspaceView === "generation" && jobId ? <section className="generation-workspace">
+        <header className="generation-workspace-head">
+          <button type="button" className="text-button back-to-input" onClick={() => showJob(null)}>← {record ? "返回当前简历" : "返回材料填写"}</button>
+          <div><span className="eyebrow">AI RESUME RUN</span><h2>正在把材料整理成可核对的简历</h2>
+            <p>这个页面只显示本次任务。你可以等待、回答补问或处理失败；材料与已有简历都不会在这里被清空。</p></div>
+          <span className="privacy-badge">任务已保存，可刷新恢复</span>
+        </header>
+        <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
+          onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>
+      </section> : workspaceView === "intake" ? <section className="start-layout">
         <div className="welcome"><span className="eyebrow">还没有打开简历</span><h2>选择方向，放入材料，确认后生成。</h2>
           <p>主路径只有三步。姓名和联系方式单独留在本机；补充信息、求职背景和生成选项放在下面，不挡住这一步。</p>
           <ol className="flow-steps"><li className={createStep === 1 ? "active" : "done"}><span>1</span>选择方向</li><li className={createStep === 2 ? "active" : createStep > 2 ? "done" : ""}><span>2</span>放入材料</li><li className={createStep === 3 ? "active" : ""}><span>3</span>确认并生成</li></ol>
@@ -441,8 +450,6 @@ export default function App() {
             <section className="flow-section consent-section" id="generate-action"><span className="step-label">步骤 3 · 确认并生成</span>
               <label className="checkbox-label consent-check"><input type="checkbox" checked={sendMaterials} onChange={e => setSendMaterials(e.target.checked)}/><span><strong>允许将材料和可选 JD 发给所选模型服务</strong><small>姓名和联系方式留在本机字段；正文中的隐私会随材料发送。{modelStatus}，调用可能计费。</small></span></label>
               {actionNotice && <div className="action-notice" role="alert"><strong>{actionNotice}</strong>{!modelStatus.startsWith("已连接") && <button type="button" className="text-button" onClick={() => setSettings(true)}>打开模型连接</button>}</div>}
-              {jobId && !record && <GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
-                onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/>}
               <button className="primary full generate-button" type="submit" disabled={!roleDirection}>{roleDirection ? "开始生成并核对事实" : "请先选择求职方向"}</button>
             </section>
           </div>
@@ -465,7 +472,9 @@ export default function App() {
             })}>先不生成，进入编辑器 →</button>
           </section>
         </fieldset></form>
-      </section> : <>
+      </section> : record ? <>
+        {jobId && selectedJob?.mode === "recheck" && <fieldset disabled={interactionLocked}><GenerationPanel jobId={jobId} onClose={() => showJob(null)} beforeAdopt={canSwitch}
+          onAdopt={row => { adopt(row); showJob(null); void refreshList(); }} onFinished={jobUpdated}/></fieldset>}
         <div className={`document-banner ${record.origin === "demo" ? "demo-banner" : ""}`}>
           {record.origin === "demo" ? "虚构演示材料，不属于你的经历，不可直接投递。" : record.ai ? "AI 整理版本 · 请对照个人经历核对，审阅通过也不能代替事实确认。" : "手工整理版本 · 请核对个人事实，当前未经过 AI 审阅。"}
           <button disabled={interactionLocked} onClick={() => void action(async () => setHistory(await api<Resume[]>(`/api/resumes/${record.id}/history`)))}>版本记录</button>
@@ -494,7 +503,7 @@ export default function App() {
             <p className="fine preview-export-note">导出前会先保存左侧修改。审阅提示不会阻止下载。</p>
           </div>
         </section></div>
-      </>}
+      </> : null}
       </div>
     </main>
     <AgentPanel target={agentTarget} collapsed={agentCollapsed} onToggle={toggleAgent} modelReady={modelStatus.startsWith("已连接")} onOpenSettings={() => setSettings(true)} onApplied={row => {

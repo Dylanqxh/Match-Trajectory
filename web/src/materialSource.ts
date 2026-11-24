@@ -36,4 +36,3 @@ export function buildGenerationSource(uploadedText: string, content: Content): s
   if (structured) blocks.push(`结构化填写\n${structured}`);
   return blocks.join("\n\n");
 }
-

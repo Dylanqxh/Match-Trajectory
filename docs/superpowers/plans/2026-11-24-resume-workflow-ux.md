@@ -151,4 +151,3 @@ Expected: PASS, or an explicitly recorded pre-existing Windows WMI/SQLAlchemy en
 git add web/src/DocumentViewToolbar.tsx web/src/DocumentViewToolbar.test.tsx web/src/App.tsx web/src/styles.css
 git commit -m "feat: make resume preview the primary workspace"
 ```
-

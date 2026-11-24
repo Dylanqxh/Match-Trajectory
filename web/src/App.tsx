@@ -17,6 +17,7 @@ import { ReviewIssues } from "./reviewIssues";
 import { modelPreflight } from "./progressPlacement";
 import { buildGenerationSource } from "./materialSource";
 import { resolveWorkspaceView } from "./workspaceView";
+import { DocumentView, DocumentViewToolbar } from "./DocumentViewToolbar";
 
 const roles = ["后端研发", "Agent／RAG 应用开发实习", "推荐算法", "NLP 算法", "数据分析", "产品经理", "内容／用户运营"];
 
@@ -79,6 +80,7 @@ export default function App() {
   const [history, setHistory] = useState<Resume[] | null>(null);
   const [preview, setPreview] = useState("");
   const [editorSection, setEditorSection] = useState<EditorSectionKey>("basics");
+  const [documentView, setDocumentView] = useState<DocumentView>("preview");
   const [agentCollapsed, setAgentCollapsed] = useState(true);
   const agentPinned = useRef<boolean | null>(null);
   const [histories, setHistories] = useState<Record<string, { revision: number; origin: string; updated_at: string }[]>>({});
@@ -484,7 +486,9 @@ export default function App() {
           <strong data-testid="ai-review-state">{dirty ? "内容已修改，需要重新审阅" : record.ai.manual_takeover ? "用户已逐项核对，保留 AI 原报告" : record.ai.review_status === "passed" ? "当前版本事实审阅通过" : record.ai.review_status === "blocked" ? (record.ai.issues.some(unresolvedBlocking) ? `当前有 ${record.ai.issues.filter(unresolvedBlocking).length} 处待逐项处理` : "阻断已逐项处理，确认后才标记为自行核对") : "当前版本尚未审阅"}</strong>
           <em>打开</em>
         </button>}
-        <div className="editor-grid"><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
+        <div className="document-workspace-bar"><div><strong>{content.name || content.target_role || "未命名简历"}</strong><span>编辑与整页预览使用同一份内容</span></div>
+          <DocumentViewToolbar value={documentView} onChange={setDocumentView}/></div>
+        <div className={`editor-grid document-view-${documentView}`}><section className="editor-panel"><div className="panel-title"><h2 id="resume-draft-title" tabIndex={-1}>编辑内容</h2><span>v{record.revision}{dirty ? " · 未保存" : " · 已保存"}</span></div>
           <ResumeEditor content={content} activeSection={editorSection} disabled={interactionLocked}
             onActiveSectionChange={setEditorSection} onChange={edit}/>
           <div className="save-bar"><button className="primary" disabled={interactionLocked || !dirty} onClick={() => void action(async () => { await save(); })}>保存修改</button>

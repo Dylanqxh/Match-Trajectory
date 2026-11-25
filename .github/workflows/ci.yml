@@ -21,21 +21,21 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22.23.0"
           cache: npm
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.5"
           enable-cache: true
@@ -54,7 +54,19 @@ jobs:
       - name: Test backend
         env:
           MATCH_TRAJECTORY_FONT_PATH: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
-        run: uv run pytest tests -q -p no:cacheprovider --basetemp=.tmp-test/pytest
+        run: |
+          set +e
+          uv run pytest tests -q -p no:cacheprovider --basetemp=.tmp-test/pytest > pytest-output.log 2>&1
+          status=$?
+          cat pytest-output.log
+          if [ "$status" -ne 0 ]; then
+            message=$(tail -n 80 pytest-output.log)
+            message=${message//'%'/'%25'}
+            message=${message//$'\r'/'%0D'}
+            message=${message//$'\n'/'%0A'}
+            echo "::error title=pytest failure::$message"
+          fi
+          exit "$status"
 
       - name: Check document layout
         run: npm run test:layout

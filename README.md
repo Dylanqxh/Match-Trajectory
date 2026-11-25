@@ -200,6 +200,7 @@ npm run test:layout
 npm run test:web
 npm run typecheck
 npm run build
+ruff check app tests tools tests_support.py
 python -m pytest tests -q
 ```
 

@@ -23,7 +23,7 @@ def test_existing_dist_stays_until_rebuild_is_requested_and_a_failed_build_stops
     helper = ROOT / "scripts" / "FrontendBuild.ps1"
     probe = r"""
 $ErrorActionPreference = 'Stop'
-. '%s'
+. '__FRONTEND_BUILD_HELPER__'
 if (Test-FrontendRebuildRequired -DistReady $true) { throw 'existing dist was treated as missing' }
 if (-not (Test-FrontendRebuildRequired -RebuildFrontend -DistReady $true)) { throw 'explicit rebuild ignored an existing dist' }
 if (-not (Test-FrontendRebuildRequired -DistReady $false)) { throw 'missing dist did not require a build' }
@@ -45,7 +45,13 @@ try {
 }
 if ($continued) { throw 'a failed frontend build continued' }
 Write-Output 'ok'
-""" % helper.as_posix()
-    result = subprocess.run(["pwsh", "-NoProfile", "-Command", probe], capture_output=True, text=True, timeout=30)
+""".replace("__FRONTEND_BUILD_HELPER__", helper.as_posix())
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stderr or result.stdout
     assert "ok" in result.stdout
